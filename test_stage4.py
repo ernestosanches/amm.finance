@@ -106,6 +106,51 @@ class UsageCounterTests(unittest.TestCase):
             self.assertEqual(rows[1]["total"], "5")
 
 
+try:
+    import matplotlib  # noqa: F401
+    HAVE_MPL = True
+except ImportError:
+    HAVE_MPL = False
+
+
+@unittest.skipUnless(HAVE_MPL, "matplotlib not installed")
+class AbsoluteCurveTests(unittest.TestCase):
+    """Stage 4.2 — baseline (4.1) + in-window change (Stage 2) = absolute curve."""
+
+    @classmethod
+    def setUpClass(cls):
+        import plot
+        cls.plot = plot
+
+    def test_build_absolute_curves(self):
+        initial = [
+            {"tick": "10", "liquidity_net": "100", "cumulative_liquidity": "100"},
+            {"tick": "20", "liquidity_net": "-100", "cumulative_liquidity": "0"},
+        ]
+        dist = [
+            {"tick": "10", "net_liquidity_delta": "50", "cumulative_liquidity_delta": "50"},
+            {"tick": "30", "net_liquidity_delta": "-50", "cumulative_liquidity_delta": "0"},
+        ]
+        start_curve, end_curve = self.plot.build_absolute_curves(initial, dist)
+        # start = baseline cumulative
+        self.assertEqual(start_curve, [{"tick": 10, "cumulative": 100},
+                                       {"tick": 20, "cumulative": 0}])
+        # end = (baseline + delta) cumulative: 10->150, 20->50, 30->0
+        self.assertEqual(end_curve, [{"tick": 10, "cumulative": 150},
+                                     {"tick": 20, "cumulative": 50},
+                                     {"tick": 30, "cumulative": 0}])
+
+    def test_plot_absolute_renders(self):
+        start_curve = [{"tick": 10, "cumulative": 100}, {"tick": 20, "cumulative": 0}]
+        end_curve = [{"tick": 10, "cumulative": 150}, {"tick": 30, "cumulative": 0}]
+        with tempfile.TemporaryDirectory() as d:
+            out = self.plot.plot_liquidity_absolute(start_curve, end_curve,
+                                                    os.path.join(d, "liq.png"), 15, 25)
+            self.assertTrue(os.path.exists(out) and os.path.getsize(out) > 0)
+            with open(out, "rb") as f:
+                self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
+
+
 class OutputValidationTests(unittest.TestCase):
     def test_initial_liquidity_csv(self):
         rows = _load("initial_liquidity.csv")

@@ -12,6 +12,7 @@ Uses the non-interactive Agg backend (no display needed). matplotlib only.
 Usage:
   python plot.py
 """
+import argparse
 import csv
 import os
 from datetime import datetime, timezone
@@ -103,18 +104,101 @@ def plot_liquidity(rows, outpath, active_tick=None):
     return outpath
 
 
+def build_absolute_curves(initial_rows, dist_rows):
+    """Combine the absolute start snapshot (Stage 4.1) with the in-window net change (Stage 2)
+    into absolute active-liquidity curves at the START and END of the range.
+
+    Both inputs are liquidityNet maps in the same `L` units:
+      start_net[tick] = initial_liquidity.liquidity_net  (absolute, all initialized ticks)
+      delta_net[tick] = liquidity_distribution.net_liquidity_delta  (in-window change)
+    end_net = start_net + delta_net per tick; cumulative sum of each = absolute active L per band.
+    Returns (start_curve, end_curve), each a list of {tick, cumulative}.
+    """
+    start_net = {int(r["tick"]): int(r["liquidity_net"]) for r in initial_rows}
+    delta_net = {int(r["tick"]): int(r["net_liquidity_delta"]) for r in dist_rows}
+    end_net = dict(start_net)
+    for tick, d in delta_net.items():
+        end_net[tick] = end_net.get(tick, 0) + d
+
+    def cumulate(net):
+        rows, running = [], 0
+        for tick in sorted(net):
+            running += net[tick]
+            rows.append({"tick": tick, "cumulative": running})
+        return rows
+
+    return cumulate(start_net), cumulate(end_net)
+
+
+def plot_liquidity_absolute(start_curve, end_curve, outpath, start_tick=None, end_tick=None,
+                            window=6000):
+    # cast cumulative L to float: real pools have positions whose cumulative L exceeds int64,
+    # which would make numpy use object dtype and break fill_between.
+    st = [r["tick"] for r in start_curve]
+    sc = [float(r["cumulative"]) for r in start_curve]
+    et = [r["tick"] for r in end_curve]
+    ec = [float(r["cumulative"]) for r in end_curve]
+    fig, ax = plt.subplots(figsize=(11, 4))
+    ax.step(st, sc, where="post", color="#7f7f7f", lw=1.0, label="start of range")
+    ax.step(et, ec, where="post", color="#9467bd", lw=1.4, label="end of range")
+    ax.fill_between(et, ec, step="post", alpha=0.18, color="#9467bd")
+    if start_tick is not None:
+        ax.axvline(start_tick, color="#7f7f7f", ls=":", lw=1.0, label=f"start tick {start_tick}")
+    if end_tick is not None:
+        ax.axvline(end_tick, color="#ff7f0e", ls="--", lw=1.0, label=f"end tick {end_tick}")
+    # focus on the near-price depth: huge far-OTM positions otherwise dwarf the chart.
+    anchors = [t for t in (start_tick, end_tick) if t is not None]
+    if anchors and window:
+        lo, hi = min(anchors) - window, max(anchors) + window
+        ax.set_xlim(lo, hi)
+        vis = [c for t, c in zip(et, ec) if lo <= t <= hi]
+        if vis:
+            ax.set_ylim(0, max(vis) * 1.1)
+        title_sfx = f"  [±{window} ticks around price; full curve in CSV]"
+    else:
+        title_sfx = ""
+    ax.set_title("Absolute liquidity distribution over price (start baseline + in-window change)"
+                 + title_sfx)
+    ax.set_ylabel("active liquidity (L)")
+    ax.set_xlabel("tick (higher tick = more WETH per USDC)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=110)
+    plt.close(fig)
+    return outpath
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--no-initial-liquidity", dest="use_initial", action="store_false",
+                    help="ignore initial_liquidity.csv; plot only the in-window net change")
+    ap.set_defaults(use_initial=True)
+    args = ap.parse_args()
+
     os.makedirs(OUT, exist_ok=True)
     tvl = read_csv("tvl_series.csv")
     swaps = read_csv("swaps_classified.csv")
     dist = read_csv("liquidity_distribution.csv")
     if not (tvl and swaps and dist):
         raise SystemExit("Missing Stage 2 CSVs — run process.py first.")
+    initial = read_csv("initial_liquidity.csv")  # Stage 4.1 baseline (optional)
 
-    active_tick = int(swaps[-1]["tick"]) if swaps else None
+    start_tick = int(swaps[0]["tick"]) if swaps else None
+    end_tick = int(swaps[-1]["tick"]) if swaps else None
     print("  ->", plot_tvl(tvl, os.path.join(OUT, "tvl.png")))
     print("  ->", plot_price_flow(swaps, os.path.join(OUT, "price_flow.png")))
-    print("  ->", plot_liquidity(dist, os.path.join(OUT, "liquidity_distribution.png"), active_tick))
+
+    liq_png = os.path.join(OUT, "liquidity_distribution.png")
+    if args.use_initial and initial:
+        # Stage 4.2: absolute standing curve = start baseline + in-window change
+        start_curve, end_curve = build_absolute_curves(initial, dist)
+        print("  ->", plot_liquidity_absolute(start_curve, end_curve, liq_png, start_tick, end_tick),
+              "(absolute, using initial_liquidity.csv)")
+    else:
+        # Stage 3 fallback: in-window net change only
+        why = "disabled" if not args.use_initial else "initial_liquidity.csv absent"
+        print("  ->", plot_liquidity(dist, liq_png, end_tick), f"(net change — {why})")
     print("Done. PNGs in out/.")
 
 

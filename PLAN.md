@@ -141,15 +141,19 @@ GIF/MP4 is an easy non-interactive teaser. Keep X-axis = **union of all position
 
 ### Stage 4.2 — Use the initial liquidity in Stage 3 plots
 
-- [ ] Extend `plot.py` so the **liquidity distribution** plot can overlay/stack the absolute baseline
-      from `initial_liquidity.csv` with the in-window net change → an **absolute** standing depth curve
-      (start baseline + cumulative change), instead of only the net-change delta.
-- [ ] Optionally use the baseline to render TVL/price context where helpful.
-- [ ] **Optional, enabled by default:** a `--use-initial-liquidity/--no-...` flag on the plotting; when
-      the baseline CSV is present it is used by default, otherwise plots degrade gracefully to the
-      Stage-3 net-change behaviour (no breakage).
-- [ ] Tests: extend `test_stage3.py` (or add to `test_stage4.py`) — baseline-present vs absent both
-      render; absolute curve = baseline + net change on a fixture.
+- [x] Extend `plot.py` so the **liquidity distribution** plot overlays the absolute baseline from
+      `initial_liquidity.csv` with the in-window net change → an **absolute** standing depth curve
+      (start vs end), instead of only the net-change delta. `build_absolute_curves()` combines the two
+      liquidityNet maps; cumulative L is float-cast (real pools exceed int64) and the x-axis is
+      windowed around the active price (huge far-OTM positions otherwise dwarf the chart; full curve
+      stays in the CSV).
+- [ ] _(optional, deferred)_ use the baseline to render extra TVL/price context — not needed for the
+      curve; skip for now.
+- [x] **Optional, enabled by default:** `--no-initial-liquidity` flag on `plot.py`; when the baseline
+      CSV is present it is used by default, otherwise plots degrade gracefully to the Stage-3
+      net-change behaviour (no breakage).
+- [x] Tests (in `test_stage4.py`): `build_absolute_curves` = baseline + net change on a fixture;
+      absolute plot renders; baseline-absent path still covered by Stage-3 tests.
 
 ### Stage 4.3 — Interactive time-axis figure (shareable)
 

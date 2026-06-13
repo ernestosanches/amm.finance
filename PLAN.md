@@ -122,12 +122,12 @@ GIF/MP4 is an easy non-interactive teaser. Keep X-axis = **union of all position
 
 ### Stage 4.1 — Initial (start-of-range) L2 liquidity snapshot + API usage logger
 
-- [ ] **`usage.py`** — a small Web3 request counter (provider middleware or a wrapped provider)
+- [x] **`usage.py`** — a small Web3 request counter (provider middleware or a wrapped provider)
       that tallies RPC calls **by method** (`eth_call`, `eth_getLogs`, `eth_getBlockByNumber`, …) for
       the current run, prints a summary, and appends a cumulative tally to **`usage.csv`** (keep all
       info in CSV; one row per run with per-method counts + total). Importable so Stages 1, 2, 4.1 can
       all use it. `usage.csv` is a generated artifact, already covered by the `*.csv` gitignore rule.
-- [ ] **`tick_snapshot.py`** — read the absolute aggregate (L2) liquidity-per-tick at the pre-range
+- [x] **`tick_snapshot.py`** — read the absolute aggregate (L2) liquidity-per-tick at the pre-range
       block via Multicall3 (`slot0` + `liquidity` + `tickBitmap` walk + batched `ticks()`), cumulate
       `liquidityNet` into absolute active L per tick band, and **self-check** the active-tick total
       against on-chain `liquidity()`. Output **`initial_liquidity.csv`** — same spirit/shape as Stage 2's
@@ -136,7 +136,7 @@ GIF/MP4 is an easy non-interactive teaser. Keep X-axis = **union of all position
       - **Optional, enabled by default:** flag `--no-initial-liquidity` (or `--initial-liquidity/--no-...`)
         to skip the on-chain reads; default ON. When off, downstream falls back to the 0-baseline
         (relative) behaviour. Wire the call counter from `usage.py` through these reads.
-- [ ] Tests: `test_stage4.py` covers the cumulation math (fixture `liquidityNet` map → known absolute
+- [x] Tests: `test_stage4.py` covers the cumulation math (fixture `liquidityNet` map → known absolute
       curve; active-tick total reconciles) and `initial_liquidity.csv` output validation.
 
 ### Stage 4.2 — Use the initial liquidity in Stage 3 plots

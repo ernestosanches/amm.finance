@@ -192,7 +192,7 @@ def main():
         rows.sort(key=lambda r: (r["block"], r["logIndex"]))
         path = f"{name.lower()}s.csv"
         if rows:
-            keys = list({k for r in rows for k in r}.keys())
+            keys = sorted({k for r in rows for k in r})
             keys = ["block", "logIndex", "tx", "timestamp", "datetime_utc"] + \
                    [k for k in keys if k not in ("block", "logIndex", "tx", "timestamp", "datetime_utc")]
             with open(path, "w", newline="") as f:

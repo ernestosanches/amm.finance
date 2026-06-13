@@ -57,8 +57,14 @@ New script `process.py` — reads the Stage 1 CSVs, writes derived CSVs. No netw
       gives active liquidity vs tick. Snapshot the curve at the start and end of the range (and the
       active `tick` from the latest swap). Emit `liquidity_distribution.csv`.
 
+- [ ] **`test_stage2.py`** (same pattern as Stage 1): offline unit tests for the pure math
+      (price-from-`sqrtPriceX96`, buy/sell classification, tick-replay cumulative sum on a tiny
+      hand-built fixture with a known answer) + output-validation tests on the derived CSVs
+      (`swaps_classified.csv`, `tvl_series.csv`, `liquidity_distribution.csv`): required columns,
+      monotonic time ordering, `side ∈ {buy,sell}`, liquidity curve non-negative.
+
 Acceptance: derived CSVs produced from Stage 1 output with no network calls (except the two optional
-`balanceOf` reads for the TVL baseline).
+`balanceOf` reads for the TVL baseline); `test_stage2.py` green.
 
 ## Stage 3 — Display the curves
 
@@ -69,8 +75,37 @@ New script `plot.py` — reads Stage 2 CSVs, renders PNGs with matplotlib.
 - [ ] **Liquidity distribution**: bar/step chart of active liquidity vs price (tick), with the active
       tick marked — start vs end snapshot.
 - [ ] Save to `out/*.png`; one figure per curve. Keep it minimal (matplotlib only).
+- [ ] **`test_stage3.py`** (same pattern): use the non-interactive `Agg` backend; drive `plot.py`
+      against small fixture CSVs and assert each expected PNG is created and non-empty (smoke test —
+      we verify files render, not pixels). Skip gracefully if `matplotlib` isn't installed.
 
-Acceptance: running `plot.py` produces the PNGs from Stage 2 CSVs.
+Acceptance: running `plot.py` produces the PNGs from Stage 2 CSVs; `test_stage3.py` green.
+
+---
+
+## Testing
+
+Dependency-free, using the standard library `unittest`. One runner + one file per stage.
+
+- **`tests.py`** — runner. Discovers and runs every `test_*.py` in the directory and exits
+  non-zero on any failure. Usage: `python tests.py` (add `-v` for verbose).
+- **`test_stage1.py`** — Stage 1 tests, two groups:
+  - **Offline unit tests** (no network, no files): import pure functions from
+    `uniswap_v3_pool_download_rpc` and check them — `to_unix` date→epoch conversion, and the
+    event topic0 keccak hashes match the known canonical signatures.
+  - **Output-validation tests** (validate the produced CSVs; skipped if a CSV is absent):
+    required columns present; >0 rows; rows sorted by `(block, logIndex)`; numeric fields parse;
+    swap `direction` ∈ {`pool_received_token0`,`pool_received_token1`}; mint/burn `tickLower <
+    tickUpper`; all timestamps fall within the requested UTC day `[start, end)`.
+- **`test_stage2.py`** — added with Stage 2. Offline unit tests for the pure math against tiny
+  hand-built fixtures with known answers (price-from-`sqrtPriceX96`, buy/sell classification,
+  tick-replay cumulative sum) + output-validation on the derived CSVs.
+- **`test_stage3.py`** — added with Stage 3. `Agg`-backend smoke test: render from fixture CSVs and
+  assert each PNG exists and is non-empty; skips if `matplotlib` is absent.
+
+Every stage ships its tests in the same commit as its code, and `python tests.py` must stay green.
+Tests do not hit the network — Stage 1 network behavior is verified by actually running the
+download (the acceptance run), tests then assert the artifact is well-formed.
 
 ---
 

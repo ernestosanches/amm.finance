@@ -72,3 +72,10 @@ dmypy.json
 .idea/
 *.swp
 .DS_Store
+
+# Generated data artifacts (downloaded / derived / plotted — reproducible from scripts)
+*.csv
+*.png
+*.parquet
+*.json
+out/

@@ -26,6 +26,8 @@ import argparse
 import csv
 import os
 
+import pool_meta
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 Q96 = 2 ** 96
 Q192 = 2 ** 192
@@ -161,11 +163,17 @@ def fetch_baseline_balances(rpc, swaps):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--d0", type=int, default=6, help="token0 decimals (USDC=6)")
-    ap.add_argument("--d1", type=int, default=18, help="token1 decimals (WETH=18)")
+    ap.add_argument("--d0", type=int, default=6, help="token0 decimals fallback (USDC=6)")
+    ap.add_argument("--d1", type=int, default=18, help="token1 decimals fallback (WETH=18)")
     ap.add_argument("--baseline-rpc", nargs="?", const="https://ethereum-rpc.publicnode.com",
                     default=None, help="fetch absolute TVL baseline via balanceOf (optional)")
     args = ap.parse_args()
+
+    # decimals: pool_metadata.csv (single source of truth) when present, else the --d0/--d1 fallback
+    meta = pool_meta.load()
+    d0, d1 = pool_meta.decimals(meta, args.d0, args.d1)
+    print(f"decimals: d0={d0} d1={d1} "
+          f"({'pool_metadata.csv' if meta else 'fallback --d0/--d1'})")
 
     swaps = read_csv("swaps.csv")
     mints = read_csv("mints.csv")
@@ -177,7 +185,7 @@ def main():
     # 1) classify swaps + price -----------------------------------------------
     classified = []
     for r in swaps:
-        price = price_usdc_per_weth(r["sqrtPriceX96"], args.d0, args.d1)
+        price = price_usdc_per_weth(r["sqrtPriceX96"], d0, d1)
         classified.append({
             "block": int(r["block"]),
             "logIndex": int(r["logIndex"]),
@@ -204,7 +212,7 @@ def main():
         events.append({"block": int(r["block"]), "logIndex": int(r["logIndex"]),
                        "timestamp": int(r["timestamp"]), "datetime_utc": r["datetime_utc"],
                        "event": "swap", "d0": float(r["amount0"]), "d1": float(r["amount1"]),
-                       "price": price_usdc_per_weth(r["sqrtPriceX96"], args.d0, args.d1)})
+                       "price": price_usdc_per_weth(r["sqrtPriceX96"], d0, d1)})
     for r in mints:   # pool receives tokens
         events.append({"block": int(r["block"]), "logIndex": int(r["logIndex"]),
                        "timestamp": int(r["timestamp"]), "datetime_utc": r["datetime_utc"],

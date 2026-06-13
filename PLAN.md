@@ -381,13 +381,14 @@ virtual orders, walks the day's swaps in order, and accrues fees separately.
 Each integration point is its own checkpoint. The new virtual figures are added **alongside** the
 existing range-view figures (both sets served), so the two can be compared.
 
-- [ ] **6.2.0 Metadata threading (pipeline becomes pool-agnostic).** Make `pool_metadata.csv` the
-      single source of truth: `process.py`, `plot.py`, `orderbook.py`, `tick_snapshot.py` read
-      `decimals0/1`, `symbol0/1`, `gamma`, `tickSpacing` from it instead of hardcoding USDC/WETH /
-      `--d0=6/--d1=18` (flags remain as a fallback when the CSV is absent, so each script still runs
-      standalone). `pool_metadata.csv` is produced early — right after Stage 1 download, before
-      Stage 2 — so every downstream stage can consume it. Re-run the **Stage 1–5 tests** after the
-      refactor to confirm no regression.
+- [x] **6.2.0 Metadata threading (pipeline becomes pool-agnostic).** Shared stdlib loader
+      `pool_meta.py` (`load`/`decimals`/`symbols`) makes `pool_metadata.csv` the single source of
+      truth: `process.py` + `plot_orderbook.py` take **decimals** from it, `plot.py` takes the
+      **symbols** for its axis labels, `tick_snapshot.py` reuses **tickSpacing** (saving one RPC
+      call). `--d0/--d1` / `USDC`/`WETH` remain as fallbacks when the CSV is absent, so every script
+      still runs standalone. `orderbook.py` needs nothing — it is tick/`L`-native (no decimals).
+      Verified end-to-end: `process.py` prints `decimals: d0=6 d1=18 (pool_metadata.csv)`, figures
+      regenerate, TVL stays absolute; full suite **118 green** (no regression on Stages 1–5).
 - [ ] **6.2.1 `build_book.py`** — replay the linked data through `Orderbook` to emit the
       book-over-time CSVs: `book_l2.csv` (aggregate bid/ask depth per tick band per slice) and
       `book_l3.csv` (per-tokenId order per tick band per slice, side-labeled), plus

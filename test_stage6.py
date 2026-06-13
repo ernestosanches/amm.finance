@@ -11,6 +11,7 @@ import unittest
 
 import link_positions as lp
 import orderbook_engine as ob
+import pool_meta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -383,6 +384,36 @@ class EngineReplayTests(unittest.TestCase):
         self.assertGreaterEqual(s["apr_total_tvl"], 0)
         self.assertGreater(s["apr_active_tvl"], s["apr_total_tvl"])   # smaller base -> higher APR
         self.assertTrue(math.isfinite(s["apr_total_tvl"]))
+
+
+# --- 6.2.0: shared metadata loader -------------------------------------------
+
+class PoolMetaFallbackTests(unittest.TestCase):
+    def test_decimals_fallback_when_absent(self):
+        self.assertEqual(pool_meta.decimals(None, 6, 18), (6, 18))
+        self.assertEqual(pool_meta.decimals(None, 8, 9), (8, 9))
+
+    def test_symbols_fallback_when_absent(self):
+        self.assertEqual(pool_meta.symbols(None), ("USDC", "WETH"))
+        self.assertEqual(pool_meta.symbols(None, "A", "B"), ("A", "B"))
+
+    def test_meta_overrides_fallback(self):
+        meta = {"decimals0": 9, "decimals1": 8, "symbol0": "FOO", "symbol1": "BAR"}
+        self.assertEqual(pool_meta.decimals(meta, 6, 18), (9, 8))
+        self.assertEqual(pool_meta.symbols(meta), ("FOO", "BAR"))
+
+
+class PoolMetaLoadTests(unittest.TestCase):
+    def setUp(self):
+        self.meta = pool_meta.load()
+        if self.meta is None:
+            self.skipTest("pool_metadata.csv absent (run link_positions.py)")
+
+    def test_typed_fields(self):
+        self.assertIsInstance(self.meta["decimals0"], int)
+        self.assertIsInstance(self.meta["gamma"], float)
+        self.assertIsInstance(self.meta["tickSpacing"], int)
+        self.assertAlmostEqual(self.meta["gamma"], self.meta["fee"] / 1_000_000)
 
 
 if __name__ == "__main__":

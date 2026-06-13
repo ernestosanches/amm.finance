@@ -21,6 +21,8 @@ import matplotlib
 matplotlib.use("Agg")  # headless; must be set before pyplot import
 import matplotlib.pyplot as plt  # noqa: E402
 
+import pool_meta  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
 
@@ -39,14 +41,15 @@ def _times(rows):
 
 # --- plotters (each takes rows + outpath, returns outpath) --------------------
 
-def plot_tvl(rows, outpath):
+def plot_tvl(rows, outpath, sym=("USDC", "WETH")):
+    s0, s1 = sym
     times = _times(rows)
     tvl = [float(r["tvl_usdc"]) for r in rows]
     basis = rows[0].get("basis", "relative") if rows else "relative"
     fig, ax = plt.subplots(figsize=(11, 4))
     ax.plot(times, tvl, lw=1.2, color="#1f77b4")
     ax.set_title(f"Pool TVL over time ({basis})")
-    ax.set_ylabel("TVL (USDC)")
+    ax.set_ylabel(f"TVL ({s0})")
     ax.set_xlabel("time (UTC)")
     ax.grid(True, alpha=0.3)
     fig.autofmt_xdate()
@@ -56,10 +59,11 @@ def plot_tvl(rows, outpath):
     return outpath
 
 
-def plot_price_flow(rows, outpath):
+def plot_price_flow(rows, outpath, sym=("USDC", "WETH")):
+    s0, s1 = sym
     times = _times(rows)
     price = [float(r["price_usdc_per_weth"]) for r in rows]
-    # signed volume: buys up (green), sells down (red), in USDC
+    # signed volume: buys up (green), sells down (red), in token0 (quote)
     signed = [float(r["amount_usdc"]) * (1 if r["side"] == "buy" else -1) for r in rows]
     colors = ["#2ca02c" if v >= 0 else "#d62728" for v in signed]
 
@@ -67,12 +71,12 @@ def plot_price_flow(rows, outpath):
                                    gridspec_kw={"height_ratios": [2, 1]})
     ax1.plot(times, price, lw=1.0, color="#1f77b4")
     ax1.set_title("Price and buy/sell flow")
-    ax1.set_ylabel("USDC per WETH")
+    ax1.set_ylabel(f"{s0} per {s1}")
     ax1.grid(True, alpha=0.3)
 
     ax2.vlines(times, 0, signed, colors=colors, lw=0.8)
     ax2.axhline(0, color="black", lw=0.5)
-    ax2.set_ylabel("swap size (USDC)\nbuy +  / sell −")
+    ax2.set_ylabel(f"swap size ({s0})\nbuy +  / sell −")
     ax2.set_xlabel("time (UTC)")
     ax2.grid(True, alpha=0.3)
 
@@ -83,7 +87,8 @@ def plot_price_flow(rows, outpath):
     return outpath
 
 
-def plot_liquidity(rows, outpath, active_tick=None):
+def plot_liquidity(rows, outpath, active_tick=None, sym=("USDC", "WETH")):
+    s0, s1 = sym
     ticks = [int(r["tick"]) for r in rows]
     cum = [int(r["cumulative_liquidity_delta"]) for r in rows]
     fig, ax = plt.subplots(figsize=(11, 4))
@@ -96,7 +101,7 @@ def plot_liquidity(rows, outpath, active_tick=None):
         ax.legend()
     ax.set_title("Liquidity distribution over price (net change over range)")
     ax.set_ylabel("cumulative active-liquidity Δ")
-    ax.set_xlabel("tick (higher tick = more WETH per USDC)")
+    ax.set_xlabel(f"tick (higher tick = more {s1} per {s0})")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(outpath, dpi=110)
@@ -131,7 +136,8 @@ def build_absolute_curves(initial_rows, dist_rows):
 
 
 def plot_liquidity_absolute(start_curve, end_curve, outpath, start_tick=None, end_tick=None,
-                            window=6000):
+                            window=6000, sym=("USDC", "WETH")):
+    s0, s1 = sym
     # cast cumulative L to float: real pools have positions whose cumulative L exceeds int64,
     # which would make numpy use object dtype and break fill_between.
     st = [r["tick"] for r in start_curve]
@@ -160,7 +166,7 @@ def plot_liquidity_absolute(start_curve, end_curve, outpath, start_tick=None, en
     ax.set_title("Absolute liquidity distribution over price (start baseline + in-window change)"
                  + title_sfx)
     ax.set_ylabel("active liquidity (L)")
-    ax.set_xlabel("tick (higher tick = more WETH per USDC)")
+    ax.set_xlabel(f"tick (higher tick = more {s1} per {s0})")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
     fig.tight_layout()
@@ -177,6 +183,7 @@ def main():
     args = ap.parse_args()
 
     os.makedirs(OUT, exist_ok=True)
+    sym = pool_meta.symbols(pool_meta.load())  # axis labels from the single source of truth (else USDC/WETH)
     tvl = read_csv("tvl_series.csv")
     swaps = read_csv("swaps_classified.csv")
     dist = read_csv("liquidity_distribution.csv")
@@ -186,19 +193,20 @@ def main():
 
     start_tick = int(swaps[0]["tick"]) if swaps else None
     end_tick = int(swaps[-1]["tick"]) if swaps else None
-    print("  ->", plot_tvl(tvl, os.path.join(OUT, "tvl.png")))
-    print("  ->", plot_price_flow(swaps, os.path.join(OUT, "price_flow.png")))
+    print("  ->", plot_tvl(tvl, os.path.join(OUT, "tvl.png"), sym))
+    print("  ->", plot_price_flow(swaps, os.path.join(OUT, "price_flow.png"), sym))
 
     liq_png = os.path.join(OUT, "liquidity_distribution.png")
     if args.use_initial and initial:
         # Stage 4.2: absolute standing curve = start baseline + in-window change
         start_curve, end_curve = build_absolute_curves(initial, dist)
-        print("  ->", plot_liquidity_absolute(start_curve, end_curve, liq_png, start_tick, end_tick),
+        print("  ->", plot_liquidity_absolute(start_curve, end_curve, liq_png, start_tick, end_tick,
+                                               sym=sym),
               "(absolute, using initial_liquidity.csv)")
     else:
         # Stage 3 fallback: in-window net change only
         why = "disabled" if not args.use_initial else "initial_liquidity.csv absent"
-        print("  ->", plot_liquidity(dist, liq_png, end_tick), f"(net change — {why})")
+        print("  ->", plot_liquidity(dist, liq_png, end_tick, sym=sym), f"(net change — {why})")
     print("Done. PNGs in out/.")
 
 

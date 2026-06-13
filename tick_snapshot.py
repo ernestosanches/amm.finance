@@ -29,6 +29,7 @@ import os
 from eth_abi import decode, encode
 from web3 import Web3
 
+import pool_meta
 from usage import UsageCounter
 from uniswap_v3_pool_download_rpc import block_by_timestamp, to_unix
 
@@ -157,7 +158,8 @@ def main():
 
     block = args.block if args.block is not None else \
         block_by_timestamp(w3, to_unix(args.start), w3.eth.block_number)
-    spacing = pc.functions.tickSpacing().call()
+    meta = pool_meta.load()  # reuse tickSpacing from the single source of truth when available
+    spacing = meta["tickSpacing"] if meta else pc.functions.tickSpacing().call()
     cur_tick = pc.functions.slot0().call(block_identifier=block)[1]
     on_chain_L = pc.functions.liquidity().call(block_identifier=block)
     print(f"block={block}  tickSpacing={spacing}  current tick={cur_tick}")

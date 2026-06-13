@@ -24,6 +24,8 @@ from collections import OrderedDict
 import plotly.graph_objects as go
 from plotly.colors import qualitative
 
+import pool_meta
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
 PALETTE = qualitative.Dark24  # one distinct colour per LP position (order)
@@ -288,6 +290,8 @@ def main():
     args = ap.parse_args()
 
     os.makedirs(OUT, exist_ok=True)
+    meta = pool_meta.load()           # decimals from the single source of truth (else 6/18)
+    d0, d1 = pool_meta.decimals(meta)
     depth = read_csv("depth_slices.csv")
     ob = read_csv("orderbook_slices.csv")
     base = read_csv("orderbook_baseline.csv")  # populated only on a with-initial run
@@ -297,11 +301,12 @@ def main():
     slices = canonical_slices(depth) if depth else None  # align L3 frames to the full timeline
     xwin = active_tick_window(depth) if depth else None   # window L3 x-axis to the active price band
     if depth:
-        print("  ->", write_html(build_depth_figure(depth, args.logy),
+        print("  ->", write_html(build_depth_figure(depth, args.logy, d0, d1),
                                  os.path.join(OUT, "depth_over_time.html")))
     if ob:
         print("  ->", write_html(
-            build_orderbook_figure(ob, slices, xtick_range=xwin, baseline_curve=baseline_curve),
+            build_orderbook_figure(ob, slices, d0=d0, d1=d1, xtick_range=xwin,
+                                   baseline_curve=baseline_curve),
             os.path.join(OUT, "orderbook.html")))
     print("Done. Open the HTML files in a browser (self-contained, shareable).")
 

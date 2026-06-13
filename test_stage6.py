@@ -503,5 +503,77 @@ class DailyMetricsCsvTests(unittest.TestCase):
         self.assertGreater(float(self.m["apr_active_tvl"]), float(self.m["apr_total_tvl"]))
 
 
+# --- 6.2.2: plot_book figures ------------------------------------------------
+
+def _sample_l2():
+    base = {"slice_dt": "2026-06-12T08:30:00+00:00", "active_tick": "202000"}
+    rows = []
+    for si in ("0", "1"):
+        for lo, hi, side, dw in [(201880, 201940, "ask", 100.0), (201940, 202000, "straddle", 95.0),
+                                 (202000, 202060, "bid", 90.0), (202060, 202120, "bid", 80.0)]:
+            rows.append({**base, "slice_idx": si, "tick_lo": str(lo), "tick_hi": str(hi),
+                         "price": "1670.0", "side": side, "depth_usdc": "1.0",
+                         "depth_weth": str(dw)})
+    return rows
+
+
+def _sample_l3():
+    base = {"slice_dt": "2026-06-12T08:30:00+00:00", "active_tick": "202000"}
+    rows = []
+    for si in ("0", "1"):
+        for tid, lo, hi, qw in [("baseline", 201880, 201940, 90.0), ("123", 201880, 201940, 5.0),
+                                ("123", 202000, 202060, 3.0), ("baseline", 202000, 202060, 88.0)]:
+            rows.append({**base, "slice_idx": si, "tokenId": tid, "tick_lo": str(lo),
+                         "tick_hi": str(hi), "price": "1670.0", "side": "ask",
+                         "q_usdc": "1.0", "q_weth": str(qw)})
+    return rows
+
+
+class PlotBookPureTests(unittest.TestCase):
+    def test_slices_group_with_label_and_active_tick(self):
+        import plot_book
+        g = plot_book._slices(_sample_l2())
+        self.assertEqual(list(g), [0, 1])
+        self.assertEqual(g[0][0], "08:30")          # HH:MM label
+        self.assertEqual(g[0][1], "202000")         # active_tick carried
+
+    def test_xaxis_is_reversed_for_ascending_price(self):
+        import plot_book
+        ax = plot_book._xaxis([201910, 202090], 6, 18)
+        self.assertEqual(ax["range"], [202090, 201910])   # hi->lo => price ascends left->right
+        self.assertEqual(len(ax["tickvals"]), len(ax["ticktext"]))
+
+    def test_metrics_line_handles_missing(self):
+        import plot_book
+        self.assertEqual(plot_book._metrics_line(None), "")
+        line = plot_book._metrics_line({"volume_usdc": "1000000", "fee_usd": "3000",
+                                        "apr_total_tvl": "0.14", "apr_active_tvl": "18.0"})
+        self.assertIn("APR(total TVL) 14.0%", line)
+
+
+class PlotBookFigureTests(unittest.TestCase):
+    def setUp(self):
+        try:
+            import plotly  # noqa: F401
+        except ImportError:
+            self.skipTest("plotly not installed")
+
+    def test_l2_figure_has_bid_ask_traces_and_fixed_y(self):
+        import plot_book
+        fig = plot_book.build_l2_figure(_sample_l2(), 6, 18)
+        self.assertEqual(len(fig.frames), 2)
+        names = {t.name for t in fig.frames[0].data}
+        self.assertEqual(names, {"bid (buy WETH)", "ask (sell WETH)", "at spot"})
+        self.assertEqual(fig.layout.yaxis.range[0], 0)        # fixed, from zero
+        self.assertEqual(fig.layout.barmode, "overlay")
+
+    def test_l3_figure_stacks_with_baseline_first(self):
+        import plot_book
+        fig = plot_book.build_l3_figure(_sample_l3(), 6, 18)
+        self.assertEqual(fig.layout.barmode, "stack")
+        self.assertEqual(fig.frames[0].data[0].name, "pre-existing (baseline)")  # grey base bottom
+        self.assertGreater(fig.layout.yaxis.range[1], 0)      # fixed positive top
+
+
 if __name__ == "__main__":
     unittest.main()

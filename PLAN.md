@@ -399,11 +399,15 @@ existing range-view figures (both sets served), so the two can be compared.
       data: with-initial ≈119 bands/slice, without-initial ≈11; in the last slice asks sit above spot
       / bids below, split 60/58 around the mid; **L3 sums exactly to L2 per band** (tested);
       `daily_metrics` = 770 swaps, $2.73M volume, $8.2k fees, **APR(total)=14.5%**, APR(active)≈1,800%.
-- [ ] **6.2.2 `plot_book.py`** — render the virtual book: x = price (USDC per WETH), bars split into
-      **bid (buy WETH) vs ask (sell WETH)** by spot, L3 stacked per tokenId, L2 aggregated; the
-      existing fixed-Y / no-flicker, axis-label, and `--log` conventions carry over. Outputs
-      `out/orderbook_virtual.html` and `out/orderbook_virtual__without_initial.html` (+ the L2
-      `depth_virtual` pair). A small `daily_metrics` panel/printout shows volume/fees/APR.
+- [x] **6.2.2 `plot_book.py`** — render the virtual book: x = price (USDC per WETH, ascending L→R =
+      conventional book), **L2** depth split bid (green, below spot) vs ask (red, above spot) with a
+      dashed spot line; **L3** stacks the individual tokenId orders per band (grey baseline base when
+      present), spot line splitting bid/ask regions. Fixed-Y / no-flicker, `--log` for the absolute
+      L2, and the `daily_metrics` line (volume/fees/APR) in the caption all carry over. Outputs
+      `out/depth_virtual.html` + `out/orderbook_virtual.html` (run_all copies the `__without_initial`
+      pair). **Verified by headless-Chromium render**: L2 shows bids left / asks right around the spot;
+      with-initial L3 is baseline-dominated (orders are slivers), without-initial L3 shows the real
+      per-position orders (blue LP 1306924's asks above spot, pink bids below).
 - [ ] **6.2.3 `run_all.py`** — add Stage 6.0 (link) and 6.2 (build + plot) to `plan_steps`; the new
       HTML join `EXPECTED_HTML`. **6.2.4 `serve.py`** — list the new virtual figures alongside the old.
 - [ ] Tests extended in `test_stage6.py`: linkage join, engine invariants, `build_book` output shape,

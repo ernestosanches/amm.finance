@@ -195,6 +195,24 @@ Acceptance: 4.1 writes `initial_liquidity.csv` (verified vs `liquidity()`) and `
 `out/orderbook.html` with a working time slider using all prepared data; 4.4 serves the HTML for
 viewing; all stage tests green.
 
+## Stage 5 — One-command pipeline runner (`run_all.py`)
+
+Goal: a single entry point that runs every stage in dependency order and produces **all** artifacts
+(CSVs, PNGs, and the **4 HTML** files), so there's no need to remember the per-stage sequence.
+
+- [x] **`run_all.py`** — orchestrates the stages via subprocess (the per-stage scripts stay the source
+      of truth). Shared `--pool/--start/--end/--slices`; `--no-baseline-rpc` to skip absolute reads.
+      Order: download → tick_snapshot (4.1) → process (2) → plot (3+4.2) → orderbook+figures (4.3).
+      Runs Stage 4.3 **twice** — without then with initial liquidity — and copies the outputs to the
+      four `out/{depth_over_time,orderbook}__{with,without}_initial.html`; the with-initial run goes
+      last so the canonical `out/*.html` stay the absolute versions. Prints a produced-files summary.
+- [x] **`test_stage5.py`** — pure tests on `plan_steps()`: all stages present & ordered, both
+      order-book variants emitted, the four HTML copy targets, dates/pool threaded through,
+      `--no-baseline-rpc` drops `--baseline-rpc`. (No network/subprocess in tests.)
+
+Acceptance: `python run_all.py` produces all CSVs, the three PNGs, and the four HTML files (verified
+end-to-end); `test_stage5.py` green.
+
 ---
 
 ## Testing
@@ -249,7 +267,8 @@ usage.py                          # Stage 4.1 — RPC call counter (-> usage.csv
 tick_snapshot.py                  # Stage 4.1 — absolute L2 start snapshot (-> initial_liquidity.csv)
 orderbook.py + plot_orderbook.py  # Stage 4.3 — L3 book over time (-> out/orderbook.html)
 serve.py                          # Stage 4.4 — view HTML over SSH/port-forward (WIP, uncommitted)
-tests.py + test_stage{1,2,3,4}.py # test runner + per-stage tests
+run_all.py                        # Stage 5 — one-command pipeline (all CSVs/PNGs/4 HTML)
+tests.py + test_stage{1..5}.py    # test runner + per-stage tests
 requirements.txt                  # pinned deps (web3, matplotlib, +plotly at Stage 4.3)
 README.md                         # public-facing project pitch
 DETAILS.md                        # technical overview, status, v2/v3 + level-1/2/3 notes

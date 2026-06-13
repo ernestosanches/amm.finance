@@ -16,8 +16,10 @@ Reference pool: **ETH/USDC 0.3%** `0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8`
 | 4.1 | Absolute start-of-range **L2 liquidity snapshot** (`tick_snapshot.py`) + RPC usage logger (`usage.py` → `usage.csv`) | ✅ done, tested |
 | 4.2 | Use the initial liquidity in Stage 3 plots (absolute depth curve) | ✅ done, tested |
 | 4.3 | Interactive, shareable **order book over time** (time slider, Plotly HTML) | ✅ done, tested |
+| 4.4 | Viewing helper `serve.py` (SSH/port-forward) | 🔧 WIP (uncommitted) |
+| 5 | One-command pipeline `run_all.py` (all CSVs/PNGs/4 HTML) | ✅ done, tested |
 
-Tests: `python tests.py` → **47 passing** (stdlib `unittest`, one `test_stage{1,2,3,4}.py` per stage;
+Tests: `python tests.py` → **56 passing** (stdlib `unittest`, one `test_stage{1..5}.py` per stage;
 tests are required for every stage/sub-stage). The Graph-subgraph variant and the original handoff
 doc are archived in `old/` (out of scope).
 
@@ -26,6 +28,14 @@ doc are archived in `old/` (out of scope).
 ```bash
 pip install -r requirements.txt
 
+# Everything in one command — all CSVs, PNGs, and the 4 HTML files (Stage 5):
+python run_all.py
+python serve.py        # then view the HTML (see "Viewing" below)
+```
+
+Or run the stages individually:
+
+```bash
 # Stage 1 — download (keyless RPC)
 python uniswap_v3_pool_download_rpc.py \
     --pool 0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8 \
@@ -48,7 +58,7 @@ python plot.py
 python orderbook.py --slices 24      # -> orderbook_slices.csv, depth_slices.csv
 python plot_orderbook.py             # -> out/orderbook.html, out/depth_over_time.html
 
-python tests.py     # 47 passing
+python tests.py     # 56 passing
 ```
 
 ## What we get (Jun 12 2026)
@@ -68,7 +78,9 @@ usage.py                          # Stage 4.1 — RPC call counter (-> usage.csv
 tick_snapshot.py                  # Stage 4.1 — absolute L2 start snapshot (-> initial_liquidity.csv)
 orderbook.py                      # Stage 4.3 — time-sliced order-book data (-> *_slices.csv)
 plot_orderbook.py                 # Stage 4.3 — interactive HTML (-> out/*.html)
-tests.py + test_stage{1,2,3,4}.py # stdlib-unittest runner + per-stage tests
+serve.py                          # Stage 4.4 — view HTML over SSH/port-forward (WIP)
+run_all.py                        # Stage 5 — one-command pipeline (all CSVs/PNGs/4 HTML)
+tests.py + test_stage{1..5}.py    # stdlib-unittest runner + per-stage tests
 requirements.txt                  # web3, matplotlib, plotly (pinned)
 PLAN.md                           # the working plan
 out/                              # generated PNGs + interactive HTML (gitignored)

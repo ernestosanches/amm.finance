@@ -40,11 +40,11 @@ writes four non-empty CSVs and exits 0.
 
 New script `process.py` — reads the Stage 1 CSVs, writes derived CSVs. No network.
 
-- [ ] **Price from tick/sqrtPriceX96**: `price = (sqrtPriceX96**2 / 2**192)` then adjust by
+- [x] **Price from tick/sqrtPriceX96**: `price = (sqrtPriceX96**2 / 2**192)` then adjust by
       `10**(d0-d1)` to get token1-per-token0 in human units (USDC per WETH → invert for WETH price).
-- [ ] **Buys vs sells**: from swap `amount0` sign (`amount0>0` = pool received USDC = trader sold
+- [x] **Buys vs sells**: from swap `amount0` sign (`amount0>0` = pool received USDC = trader sold
       USDC for WETH). Emit `swaps_classified.csv` with side + price + size.
-- [ ] **TVL over time (RPC-only, no price API):** reconstruct pool token balances by replaying
+- [x] **TVL over time (RPC-only, no price API):** reconstruct pool token balances by replaying
       balance-affecting events from a starting balance:
       start from `balanceOf(pool)` at `start_block` for token0/token1 (one RPC call each — still
       keyless, current-state read), then apply `+Mint`, `±Swap`, `−Collect`, `+Flash.paid` per event
@@ -52,12 +52,12 @@ New script `process.py` — reads the Stage 1 CSVs, writes derived CSVs. No netw
       (USD optional/out-of-scope for the minimal version). Emit `tvl_series.csv`.
       - Fallback if start-block `balanceOf` isn't served by the public node: start at 0 and report
         TVL as *net flow* (relative), noting the offset. Decide at implementation time.
-- [ ] **Liquidity-by-tick over time ("level 3"):** replay mints/burns in `(block, logIndex)` order:
+- [x] **Liquidity-by-tick over time ("level 3"):** replay mints/burns in `(block, logIndex)` order:
       `net[tickLower] += amount; net[tickUpper] -= amount` (reverse sign on burns). Cumulative sum
       gives active liquidity vs tick. Snapshot the curve at the start and end of the range (and the
       active `tick` from the latest swap). Emit `liquidity_distribution.csv`.
 
-- [ ] **`test_stage2.py`** (same pattern as Stage 1): offline unit tests for the pure math
+- [x] **`test_stage2.py`** (same pattern as Stage 1): offline unit tests for the pure math
       (price-from-`sqrtPriceX96`, buy/sell classification, tick-replay cumulative sum on a tiny
       hand-built fixture with a known answer) + output-validation tests on the derived CSVs
       (`swaps_classified.csv`, `tvl_series.csv`, `liquidity_distribution.csv`): required columns,

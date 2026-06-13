@@ -8,7 +8,9 @@ appended to this file as those sub-stages land.
 import math
 import os
 import unittest
+from collections import defaultdict
 
+import build_book as bb
 import link_positions as lp
 import orderbook_engine as ob
 import pool_meta
@@ -414,6 +416,91 @@ class PoolMetaLoadTests(unittest.TestCase):
         self.assertIsInstance(self.meta["gamma"], float)
         self.assertIsInstance(self.meta["tickSpacing"], int)
         self.assertAlmostEqual(self.meta["gamma"], self.meta["fee"] / 1_000_000)
+
+
+# --- 6.2.1: build_book replay helpers + output validation --------------------
+
+class BuildEventsTests(unittest.TestCase):
+    def test_sorted_by_block_then_logindex_with_kinds(self):
+        mints = [{"block": "5", "logIndex": "2"}]
+        burns = [{"block": "5", "logIndex": "1"}]
+        swaps = [{"block": "4", "logIndex": "9"}]
+        ev = bb.build_events(mints, burns, swaps)
+        self.assertEqual([(b, l, k) for b, l, k, _ in ev],
+                         [(4, 9, "swap"), (5, 1, "burn"), (5, 2, "mint")])
+
+
+class FixedGridTests(unittest.TestCase):
+    def test_windows_and_includes_position_boundaries(self):
+        mints = [{"tickLower": "201000", "tickUpper": "203000"}]
+        burns = []
+        baseline = {200000: 1, 202000: 1, 500000: 1}   # 500000 is far outside the window
+        swaps = [{"tick": "202000"}]
+        grid, (lo, hi) = bb.fixed_grid(mints, burns, baseline, swaps, window=3000)
+        self.assertEqual((lo, hi), (199000, 205000))
+        self.assertIn(201000, grid)       # position boundary inside window
+        self.assertIn(203000, grid)
+        self.assertNotIn(500000, grid)    # outside window dropped
+        self.assertEqual(grid, sorted(grid))
+
+
+class ApplyEventTests(unittest.TestCase):
+    def test_mint_then_swap(self):
+        book = ob.Orderbook(gamma=0.003, d0=6, d1=18)
+        bb.apply_event(book, "mint", {"tokenId": "1", "tickLower": "200000",
+                                      "tickUpper": "204000", "amount": "1000"}, 6, 18)
+        self.assertEqual(book.positions["1"]["L"], 1000)
+        tick = bb.apply_event(book, "swap", {"direction": "pool_received_token0",
+                              "amount0": "1000", "amount1": "0.6", "tick": "202000",
+                              "liquidity": "1000"}, 6, 18)
+        self.assertEqual(tick, 202000)
+        self.assertGreater(book.fees0["1"], 0)   # in-range -> earned token0 fee
+
+
+class BookCsvTests(unittest.TestCase):
+    def setUp(self):
+        self.l2 = _csv("book_l2.csv")
+        self.l3 = _csv("book_l3.csv")
+        if self.l2 is None:
+            self.skipTest("book_l2.csv absent (run build_book.py)")
+
+    def test_side_consistent_with_active_tick(self):
+        for r in self.l2:
+            at, lo, hi = int(r["active_tick"]), int(r["tick_lo"]), int(r["tick_hi"])
+            if r["side"] == "ask":
+                self.assertLessEqual(hi, at)         # band below current tick = above spot price
+            elif r["side"] == "bid":
+                self.assertGreaterEqual(lo, at)      # band above current tick = below spot price
+            elif r["side"] == "straddle":
+                self.assertTrue(lo < at < hi)
+
+    def test_l3_aggregates_to_l2(self):
+        if self.l3 is None:
+            self.skipTest("book_l3.csv absent")
+        agg = defaultdict(float)
+        for r in self.l3:
+            agg[(r["slice_idx"], r["tick_lo"], r["tick_hi"])] += float(r["q_weth"])
+        for r in self.l2:
+            key = (r["slice_idx"], r["tick_lo"], r["tick_hi"])
+            self.assertTrue(_rel(agg[key], float(r["depth_weth"])))
+
+
+class DailyMetricsCsvTests(unittest.TestCase):
+    def setUp(self):
+        rows = _csv("daily_metrics.csv")
+        if rows is None:
+            self.skipTest("daily_metrics.csv absent (run build_book.py)")
+        self.m = rows[0]
+
+    def test_fee_is_gamma_times_volume_ish(self):
+        # fee_usd should be on the order of gamma * volume (both legs valued in USD)
+        vol, fee, g = float(self.m["volume_usdc"]), float(self.m["fee_usd"]), float(self.m["gamma"])
+        self.assertGreater(fee, 0)
+        self.assertLess(fee, vol)                       # fee is a small fraction of volume
+        self.assertLess(abs(fee - g * vol) / (g * vol), 0.5)   # within 2x of one-leg estimate
+
+    def test_active_apr_exceeds_total_apr(self):
+        self.assertGreater(float(self.m["apr_active_tvl"]), float(self.m["apr_total_tvl"]))
 
 
 if __name__ == "__main__":

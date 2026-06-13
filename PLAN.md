@@ -389,11 +389,16 @@ existing range-view figures (both sets served), so the two can be compared.
       still runs standalone. `orderbook.py` needs nothing — it is tick/`L`-native (no decimals).
       Verified end-to-end: `process.py` prints `decimals: d0=6 d1=18 (pool_metadata.csv)`, figures
       regenerate, TVL stays absolute; full suite **118 green** (no regression on Stages 1–5).
-- [ ] **6.2.1 `build_book.py`** — replay the linked data through `Orderbook` to emit the
+- [x] **6.2.1 `build_book.py`** — replay the linked data through `Orderbook` to emit the
       book-over-time CSVs: `book_l2.csv` (aggregate bid/ask depth per tick band per slice) and
       `book_l3.csv` (per-tokenId order per tick band per slice, side-labeled), plus
       `daily_metrics.csv` (volume, fees, APR). Honours with/without-initial (synthetic baseline
-      position on/off).
+      position on/off). A **fixed price grid** (every initialized tick in a ±window) is computed once
+      so bands/x-axis stay stable across slices (no flicker). `daily_metrics.csv` is pool-level and is
+      written **only on the with-initial run** (active TVL needs the full book). Verified on Jun-12
+      data: with-initial ≈119 bands/slice, without-initial ≈11; in the last slice asks sit above spot
+      / bids below, split 60/58 around the mid; **L3 sums exactly to L2 per band** (tested);
+      `daily_metrics` = 770 swaps, $2.73M volume, $8.2k fees, **APR(total)=14.5%**, APR(active)≈1,800%.
 - [ ] **6.2.2 `plot_book.py`** — render the virtual book: x = price (USDC per WETH), bars split into
       **bid (buy WETH) vs ask (sell WETH)** by spot, L3 stacked per tokenId, L2 aggregated; the
       existing fixed-Y / no-flicker, axis-label, and `--log` conventions carry over. Outputs

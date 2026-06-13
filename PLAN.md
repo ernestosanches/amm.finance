@@ -61,7 +61,8 @@ New script `process.py` — reads the Stage 1 CSVs, writes derived CSVs. No netw
       (price-from-`sqrtPriceX96`, buy/sell classification, tick-replay cumulative sum on a tiny
       hand-built fixture with a known answer) + output-validation tests on the derived CSVs
       (`swaps_classified.csv`, `tvl_series.csv`, `liquidity_distribution.csv`): required columns,
-      monotonic time ordering, `side ∈ {buy,sell}`, liquidity curve non-negative.
+      monotonic time ordering, `side ∈ {buy,sell}`, tick-sorted integer deltas (a *net-change* curve,
+      so values may be negative — it is NOT asserted non-negative).
 
 Acceptance: derived CSVs produced from Stage 1 output with no network calls (except the two optional
 `balanceOf` reads for the TVL baseline); `test_stage2.py` green.
@@ -70,20 +71,114 @@ Acceptance: derived CSVs produced from Stage 1 output with no network calls (exc
 
 New script `plot.py` — reads Stage 2 CSVs, renders PNGs with matplotlib.
 
-- [ ] **TVL(t)** line chart from `tvl_series.csv`.
-- [ ] **Price(t)** + **buy/sell flow**: price line with buy/sell volume bars from `swaps_classified.csv`.
-- [ ] **Liquidity distribution**: bar/step chart of active liquidity vs price (tick), with the active
-      tick marked — start vs end snapshot.
-- [ ] Save to `out/*.png`; one figure per curve. Keep it minimal (matplotlib only).
-- [ ] **`test_stage3.py`** (same pattern): use the non-interactive `Agg` backend; drive `plot.py`
-      against small fixture CSVs and assert each expected PNG is created and non-empty (smoke test —
-      we verify files render, not pixels). Skip gracefully if `matplotlib` isn't installed.
+- [x] **TVL(t)** line chart from `tvl_series.csv` (`out/tvl.png`).
+- [x] **Price(t)** + **buy/sell flow**: price line over a stem plot of signed swap size — buys up
+      (green), sells down (red) — from `swaps_classified.csv` (`out/price_flow.png`).
+- [x] **Liquidity distribution**: step/filled chart of cumulative liquidity Δ vs tick, active tick
+      marked, from `liquidity_distribution.csv` (`out/liquidity_distribution.png`).
+- [x] Save to `out/*.png`; one figure per curve. matplotlib only, `Agg` backend (headless).
+- [x] **`test_stage3.py`** (same pattern): `Agg`-backend smoke test driving each plotter against tiny
+      fixture rows; asserts the PNG exists, is non-empty, and has a valid PNG header. Skips if
+      `matplotlib` isn't installed.
 
 Acceptance: running `plot.py` produces the PNGs from Stage 2 CSVs; `test_stage3.py` green.
+
+## Stage 4 — Level-3 order book over time (interactive)
+
+Goal: visualize the **liquidity book evolving over time** with a **time slider**, anchored on the
+pool's *actual* starting liquidity (not 0). Conceptually a 3D object (level × order × time); we
+collapse time to a slider so each frame is a 2D slice. Target slice: **Y = price levels (ticks)**,
+**X = active positions, oldest→newest**, **colour = that position's liquidity at that level**;
+**slider = time**. Columns appear on mint and disappear on burn as time advances.
+
+Split into three sub-stages so each lands independently with its own tests.
+
+### Why a starting snapshot is needed (context)
+
+Our in-window Mint/Burn events only describe the *change* in liquidity over the range — they start
+from 0. The pool already holds liquidity at `start_date`. We **cannot** recover individual *old*
+positions (L3) without parsing full history, BUT we **can** read the absolute **aggregate (L2)**
+liquidity-per-tick directly from pool contract state at the start block — keyless, no event parsing:
+- `slot0()` → current tick; `liquidity()` → active L anchor; `tickBitmap(word)` → which ticks are
+  initialized; `ticks(t).liquidityNet` → the absolute `±L` boundary delta at each initialized tick.
+- Cumulating `liquidityNet` outward from the current tick reconstructs absolute active L at every
+  band. **Verified:** for this pool that reconstruction equals on-chain `liquidity()` exactly.
+- **Scale is small:** ~688 initialized ticks here; via **Multicall3** (`0xcA11…CA11`, works at
+  historical blocks) the whole snapshot is **~5 RPC calls**, not ~800. Comfortably under any limit.
+- This baseline is **aggregate L2 only** — it represents "old orders" as a per-tick depth layer with
+  no individual identity. In-window events (L3) layer on top.
+
+### App vs library — decision (for 4.3)
+
+**No custom server app.** Use **Plotly `animation_frame`** → a **single standalone HTML** file:
+built-in time slider + play button, client-side, shareable. Precompute all slices once (cheap here).
+Not building an app because: matplotlib `Slider` needs a live process (bad for sharing); a bespoke
+HTML/JS app is only worth it for **server-side on-demand** slicing over data too big to precompute
+(not our case); Bokeh standalone HTML is a fine alt but Plotly is least-effort. `FuncAnimation` →
+GIF/MP4 is an easy non-interactive teaser. Keep X-axis = **union of all positions/ticks seen**
+(stable axis); mask inactive per frame so the animation stays clean.
+
+---
+
+### Stage 4.1 — Initial (start-of-range) L2 liquidity snapshot + API usage logger
+
+- [ ] **`usage.py`** — a small Web3 request counter (provider middleware or a wrapped provider)
+      that tallies RPC calls **by method** (`eth_call`, `eth_getLogs`, `eth_getBlockByNumber`, …) for
+      the current run, prints a summary, and appends a cumulative tally to **`usage.csv`** (keep all
+      info in CSV; one row per run with per-method counts + total). Importable so Stages 1, 2, 4.1 can
+      all use it. `usage.csv` is a generated artifact, already covered by the `*.csv` gitignore rule.
+- [ ] **`tick_snapshot.py`** — read the absolute aggregate (L2) liquidity-per-tick at the pre-range
+      block via Multicall3 (`slot0` + `liquidity` + `tickBitmap` walk + batched `ticks()`), cumulate
+      `liquidityNet` into absolute active L per tick band, and **self-check** the active-tick total
+      against on-chain `liquidity()`. Output **`initial_liquidity.csv`** — same spirit/shape as Stage 2's
+      `liquidity_distribution.csv` (columns: `tick`, plus absolute `liquidity_net` and
+      `cumulative_liquidity`), so Stage 3 and 4 can consume it the same way.
+      - **Optional, enabled by default:** flag `--no-initial-liquidity` (or `--initial-liquidity/--no-...`)
+        to skip the on-chain reads; default ON. When off, downstream falls back to the 0-baseline
+        (relative) behaviour. Wire the call counter from `usage.py` through these reads.
+- [ ] Tests: `test_stage4.py` covers the cumulation math (fixture `liquidityNet` map → known absolute
+      curve; active-tick total reconciles) and `initial_liquidity.csv` output validation.
+
+### Stage 4.2 — Use the initial liquidity in Stage 3 plots
+
+- [ ] Extend `plot.py` so the **liquidity distribution** plot can overlay/stack the absolute baseline
+      from `initial_liquidity.csv` with the in-window net change → an **absolute** standing depth curve
+      (start baseline + cumulative change), instead of only the net-change delta.
+- [ ] Optionally use the baseline to render TVL/price context where helpful.
+- [ ] **Optional, enabled by default:** a `--use-initial-liquidity/--no-...` flag on the plotting; when
+      the baseline CSV is present it is used by default, otherwise plots degrade gracefully to the
+      Stage-3 net-change behaviour (no breakage).
+- [ ] Tests: extend `test_stage3.py` (or add to `test_stage4.py`) — baseline-present vs absent both
+      render; absolute curve = baseline + net change on a fixture.
+
+### Stage 4.3 — Interactive time-axis figure (shareable)
+
+- [ ] **`orderbook.py`** — replay `mints`/`burns`/`collects` in `(block, logIndex)` order, maintaining a
+      **position table** keyed by `(owner, tickLower, tickUpper)` (NFT `tokenId` decoding is a later
+      refinement). Bucket the range into time slices; per slice emit each **active** position
+      `{mint_time(age), tickLower, tickUpper, current_L}`. Seed the per-tick aggregate from
+      `initial_liquidity.csv` when available so each slice shows **absolute** depth (old baseline +
+      live positions); without it, slices are in-window-only and labelled as such. Output
+      `orderbook_slices.csv`/`.json`.
+- [ ] **`plot_orderbook.py`** — Plotly `animation_frame` figure: per frame a heatmap `Y = tick levels`,
+      `X = active positions oldest→newest`, `colour = L`, `slider = time`. Export standalone
+      `out/orderbook.html`. Plus a simpler companion **L2 depth-over-time** animation
+      (`X = tick`, `Y = absolute active L`, `animation_frame = time`) → `out/depth_over_time.html`.
+- [ ] Add `plotly` to `requirements.txt`.
+- [ ] Tests: position-replay membership (`mint⇒active`, `burn⇒absent`, per-slice `L`), baseline
+      seeding, and a standalone-HTML smoke test (skip if `plotly` absent).
+
+Acceptance: 4.1 writes `initial_liquidity.csv` (verified vs `liquidity()`) and `usage.csv`;
+4.2 plots an absolute depth curve using it (degrading gracefully when absent); 4.3 writes a shareable
+`out/orderbook.html` with a working time slider using all prepared data; all stage tests green.
 
 ---
 
 ## Testing
+
+> **Tests are required for every stage and sub-stage** (1, 2, 3, 4.1, 4.2, 4.3 — and any future
+> work), following the pattern below. This is a standing rule; individual stage entries don't need to
+> restate it. A stage isn't "done" until its tests are added and `python tests.py` is green.
 
 Dependency-free, using the standard library `unittest`. One runner + one file per stage.
 
@@ -102,6 +197,10 @@ Dependency-free, using the standard library `unittest`. One runner + one file pe
   tick-replay cumulative sum) + output-validation on the derived CSVs.
 - **`test_stage3.py`** — added with Stage 3. `Agg`-backend smoke test: render from fixture CSVs and
   assert each PNG exists and is non-empty; skips if `matplotlib` is absent.
+- **`test_stage4.py`** — spans 4.1–4.3: `liquidityNet` cumulation + active-tick reconciliation and
+  `initial_liquidity.csv` validation (4.1); absolute curve = baseline + net change (4.2); position-replay
+  membership (mint⇒active, burn⇒absent, per-slice `L`) + standalone-HTML smoke test (4.3, skips if
+  `plotly` absent). Network reads (Multicall3 snapshot) are exercised by running 4.1, not in unit tests.
 
 Every stage ships its tests in the same commit as its code, and `python tests.py` must stay green.
 Tests do not hit the network — Stage 1 network behavior is verified by actually running the
@@ -120,14 +219,28 @@ download (the acceptance run), tests then assert the artifact is well-formed.
 ## Deliverables
 
 ```
-uniswap_v3_pool_download_rpc.py   # Stage 1 (fix + reuse)
-process.py                        # Stage 2 (new)
-plot.py                           # Stage 3 (new)
-out/                              # PNGs
-*.csv                             # intermediate data
+uniswap_v3_pool_download_rpc.py   # Stage 1 — download
+process.py                        # Stage 2 — derive series
+plot.py                           # Stage 3 (+ 4.2) — PNG plots, optional initial-liquidity overlay
+usage.py                          # Stage 4.1 — RPC call counter (-> usage.csv)
+tick_snapshot.py                  # Stage 4.1 — absolute L2 start snapshot (-> initial_liquidity.csv)
+orderbook.py + plot_orderbook.py  # Stage 4.3 — L3 book over time (-> out/orderbook.html)
+tests.py + test_stage{1,2,3,4}.py # test runner + per-stage tests
+requirements.txt                  # pinned deps (web3, matplotlib, +plotly at Stage 4.3)
+README.md                         # overview, status, v2/v3 + level-1/2/3 notes
+out/                              # PNGs + interactive HTML
+*.csv                             # intermediate data (incl. initial_liquidity.csv, usage.csv)
 old/                              # archived Graph script + original plan
 ```
 
 ## Dependencies
 
-`web3` (installed, 7.16.0) for Stage 1; `matplotlib` for Stage 3 (install at Stage 3).
+Pinned in **`requirements.txt`** — install with `pip install -r requirements.txt`:
+
+- `web3==7.16.0` — Stage 1 download (`eth_getLogs`) + optional Stage 2 TVL baseline (`balanceOf`).
+- `matplotlib==3.10.9` — Stage 3 plotting (`Agg` backend, no display needed).
+- `plotly` — Stage 4.3 interactive order-book-over-time (standalone HTML, `animation_frame` slider).
+  (Stage 4.1 reads use `web3` + Multicall3; no new dep.)
+
+Stages 1–2 core math is stdlib-only; tests use the stdlib `unittest` (no extra deps). The archived
+Graph script in `old/` needs `requests` and is out of scope.

@@ -151,6 +151,107 @@ class AbsoluteCurveTests(unittest.TestCase):
                 self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
 
 
+import orderbook as ob
+
+try:
+    import plotly  # noqa: F401
+    HAVE_PLOTLY = True
+except ImportError:
+    HAVE_PLOTLY = False
+
+
+class OrderbookReplayTests(unittest.TestCase):
+    """Stage 4.3 — position replay & slicing (pure)."""
+
+    MINTS = [{"block": "1", "logIndex": "0", "timestamp": "100",
+              "tickLower": "10", "tickUpper": "20", "amount": "100"}]
+    BURNS = [{"block": "3", "logIndex": "0", "timestamp": "300",
+              "tickLower": "10", "tickUpper": "20", "amount": "100"}]
+
+    def test_first_mint_times(self):
+        self.assertEqual(ob.first_mint_times(self.MINTS), {(10, 20): 100})
+
+    def test_slice_times(self):
+        self.assertEqual(ob.slice_times(0, 300, 4), [0, 100, 200, 300])
+        self.assertEqual(ob.slice_times(0, 300, 1), [300])
+
+    def test_mint_active_then_burn_absent(self):
+        evs = ob.merge_position_events(self.MINTS, self.BURNS)
+        fm = ob.first_mint_times(self.MINTS)
+        self.assertEqual(ob.active_positions_at(evs, 50, fm), [])          # before mint
+        active = ob.active_positions_at(evs, 200, fm)                      # after mint
+        self.assertEqual(len(active), 1)
+        self.assertEqual((active[0]["tickLower"], active[0]["tickUpper"], active[0]["L"]),
+                         (10, 20, 100))
+        self.assertEqual(ob.active_positions_at(evs, 400, fm), [])         # after burn
+
+    def test_burn_only_position_excluded(self):
+        # a position with only a burn in-window (pre-existing) has no first-mint -> not shown
+        evs = ob.merge_position_events([], self.BURNS)
+        self.assertEqual(ob.active_positions_at(evs, 400, {}), [])
+
+    def test_depth_cumulation(self):
+        evs = ob.merge_position_events(self.MINTS, [])
+        net = ob.net_delta_at(evs, 200)
+        self.assertEqual(dict(net), {10: 100, 20: -100})
+        absn = ob.absolute_net({5: 7}, net)
+        self.assertEqual(absn, {5: 7, 10: 100, 20: -100})
+        self.assertEqual(ob.cumulative(net), [(10, 100), (20, 0)])
+
+    def test_active_tick_at(self):
+        swaps = [{"timestamp": "100", "tick": "5"}, {"timestamp": "200", "tick": "9"}]
+        self.assertEqual(ob.active_tick_at(swaps, 150), 5)
+        self.assertEqual(ob.active_tick_at(swaps, 250), 9)
+        self.assertIsNone(ob.active_tick_at(swaps, 50))
+
+
+@unittest.skipUnless(HAVE_PLOTLY, "plotly not installed")
+class OrderbookFigureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import plot_orderbook
+        cls.po = plot_orderbook
+
+    def _depth(self, cumL_pair):
+        return [{"slice_idx": "0", "slice_dt": "2026-06-12T00:00:00+00:00", "active_tick": "12",
+                 "tick": "10", "cumulative_L": str(cumL_pair[0])},
+                {"slice_idx": "0", "slice_dt": "2026-06-12T00:00:00+00:00", "active_tick": "12",
+                 "tick": "20", "cumulative_L": str(cumL_pair[1])}]
+
+    def test_depth_html(self):
+        fig = self.po.build_depth_figure(self._depth((100, 50)))
+        self.assertEqual(len(fig.frames), 1)
+        with tempfile.TemporaryDirectory() as d:
+            p = self.po.write_html(fig, os.path.join(d, "depth.html"))
+            self.assertGreater(os.path.getsize(p), 0)
+            with open(p) as f:
+                self.assertIn("plotly", f.read().lower())
+
+    def test_depth_logy_when_positive(self):
+        fig = self.po.build_depth_figure(self._depth((100, 50)), logy=True)
+        self.assertEqual(fig.layout.yaxis.type, "log")
+
+    def test_depth_linear_when_nonpositive(self):
+        # negatives present (relative/net-change case) -> log impossible -> linear, range includes <0
+        fig = self.po.build_depth_figure(self._depth((-30, 50)), logy=True)
+        self.assertNotEqual(fig.layout.yaxis.type, "log")
+        self.assertLess(fig.layout.yaxis.range[0], 0)
+
+    def test_depth_linear_flag(self):
+        fig = self.po.build_depth_figure(self._depth((100, 50)), logy=False)
+        self.assertNotEqual(fig.layout.yaxis.type, "log")
+
+    def test_orderbook_html(self):
+        rows = [{"slice_idx": "0", "slice_time": "100", "slice_dt": "2026-06-12T06:00:00+00:00",
+                 "pos_id": "10_20", "mint_time": "100", "tickLower": "10", "tickUpper": "20",
+                 "L": "100"}]
+        fig = self.po.build_orderbook_figure(rows)
+        self.assertEqual(len(fig.data[0].x), 1)  # one position column
+        with tempfile.TemporaryDirectory() as d:
+            p = self.po.write_html(fig, os.path.join(d, "ob.html"))
+            self.assertGreater(os.path.getsize(p), 0)
+
+
 class OutputValidationTests(unittest.TestCase):
     def test_initial_liquidity_csv(self):
         rows = _load("initial_liquidity.csv")

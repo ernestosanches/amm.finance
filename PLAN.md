@@ -157,24 +157,43 @@ GIF/MP4 is an easy non-interactive teaser. Keep X-axis = **union of all position
 
 ### Stage 4.3 — Interactive time-axis figure (shareable)
 
-- [ ] **`orderbook.py`** — replay `mints`/`burns`/`collects` in `(block, logIndex)` order, maintaining a
+- [x] **`orderbook.py`** — replay `mints`/`burns`/`collects` in `(block, logIndex)` order, maintaining a
       **position table** keyed by `(owner, tickLower, tickUpper)` (NFT `tokenId` decoding is a later
       refinement). Bucket the range into time slices; per slice emit each **active** position
       `{mint_time(age), tickLower, tickUpper, current_L}`. Seed the per-tick aggregate from
       `initial_liquidity.csv` when available so each slice shows **absolute** depth (old baseline +
       live positions); without it, slices are in-window-only and labelled as such. Output
       `orderbook_slices.csv`/`.json`.
-- [ ] **`plot_orderbook.py`** — Plotly `animation_frame` figure: per frame a heatmap `Y = tick levels`,
+- [x] **`plot_orderbook.py`** — Plotly `animation_frame` figure: per frame a heatmap `Y = tick levels`,
       `X = active positions oldest→newest`, `colour = L`, `slider = time`. Export standalone
       `out/orderbook.html`. Plus a simpler companion **L2 depth-over-time** animation
       (`X = tick`, `Y = absolute active L`, `animation_frame = time`) → `out/depth_over_time.html`.
-- [ ] Add `plotly` to `requirements.txt`.
-- [ ] Tests: position-replay membership (`mint⇒active`, `burn⇒absent`, per-slice `L`), baseline
+- [x] Add `plotly` to `requirements.txt`.
+- [x] Tests: position-replay membership (`mint⇒active`, `burn⇒absent`, per-slice `L`), baseline
       seeding, and a standalone-HTML smoke test (skip if `plotly` absent).
+- [x] **Scale review (follow-up):** depth chart Y defaults to **log** when data is all-positive
+      (absolute view); falls back to **linear including negatives** for the relative/net-change view
+      (log can't show ≤0, and the old `[0, max]` range was clipping the negative bars). `--linear`
+      overrides. Heatmap colour is `log10(L)`.
+
+### Stage 4.4 — Viewing / sharing helper (`serve.py`)  — IN PROGRESS, not yet committed
+
+Goal: a simple static server so the generated `out/*.html` figures can be viewed from a remote
+host (SSH / Cursor port-forward) or a host's public port mapping.
+
+- [x] **`serve.py`** — serve a directory (default `out/`) over a chosen host/port; lists every
+      `.html` with its full URL. `--host 0.0.0.0` + `--url http://HOST:PUBLIC_PORT` for public
+      mappings (e.g. Vast.ai). Binds `127.0.0.1` by default (SSH-tunnel friendly).
+- [ ] **Pending fixes (do later — keep `serve.py` OUT of commits until done):** smoother remote/Vast
+      viewing (e.g. auto-pick a free port, clearer public-URL guidance, optional auto-open). On Vast
+      all published ports were already busy → the working path is the SSH tunnel / Cursor forward.
+- [ ] Tests (per standing rule, add when finalized): smoke test that the server starts and returns a
+      file (HTTP 200), or a thin unit test of the URL/listing logic.
 
 Acceptance: 4.1 writes `initial_liquidity.csv` (verified vs `liquidity()`) and `usage.csv`;
 4.2 plots an absolute depth curve using it (degrading gracefully when absent); 4.3 writes a shareable
-`out/orderbook.html` with a working time slider using all prepared data; all stage tests green.
+`out/orderbook.html` with a working time slider using all prepared data; 4.4 serves the HTML for
+viewing; all stage tests green.
 
 ---
 
@@ -229,9 +248,11 @@ plot.py                           # Stage 3 (+ 4.2) — PNG plots, optional init
 usage.py                          # Stage 4.1 — RPC call counter (-> usage.csv)
 tick_snapshot.py                  # Stage 4.1 — absolute L2 start snapshot (-> initial_liquidity.csv)
 orderbook.py + plot_orderbook.py  # Stage 4.3 — L3 book over time (-> out/orderbook.html)
+serve.py                          # Stage 4.4 — view HTML over SSH/port-forward (WIP, uncommitted)
 tests.py + test_stage{1,2,3,4}.py # test runner + per-stage tests
 requirements.txt                  # pinned deps (web3, matplotlib, +plotly at Stage 4.3)
-README.md                         # overview, status, v2/v3 + level-1/2/3 notes
+README.md                         # public-facing project pitch
+DETAILS.md                        # technical overview, status, v2/v3 + level-1/2/3 notes
 out/                              # PNGs + interactive HTML
 *.csv                             # intermediate data (incl. initial_liquidity.csv, usage.csv)
 old/                              # archived Graph script + original plan

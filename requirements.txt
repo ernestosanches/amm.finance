@@ -1,9 +1,11 @@
 # Minimal RPC-only Uniswap v3 pipeline dependencies.
 # Install with: pip install -r requirements.txt
 #
-# web3       -> Stage 1 download (eth_getLogs) + optional Stage 2 TVL baseline (balanceOf)
+# web3       -> Stage 1 download (eth_getLogs) + Stage 4.1 snapshot (Multicall3) / TVL baseline
 # matplotlib -> Stage 3 plotting (Agg backend, no display needed)
+# plotly     -> Stage 4.3 interactive order-book-over-time (standalone HTML, animation_frame slider)
 # Stages 1-2 core math is stdlib-only; tests are stdlib unittest (no extra deps).
 # (The archived Graph script in old/ uses `requests` and is out of scope.)
 web3==7.16.0
 matplotlib==3.10.9
+plotly==6.8.0

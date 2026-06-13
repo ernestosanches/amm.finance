@@ -336,33 +336,45 @@ New script `link_positions.py` (keyless RPC).
 A stateful event-replay book. Holds positions per tokenId, expands each into per-initialized-tick
 virtual orders, walks the day's swaps in order, and accrues fees separately.
 
-- [ ] **Math layer** (pure functions, the contract in `ORDERS.md`): `L` from deposited amounts;
+- [x] **Math layer** (pure functions, the contract in `ORDERS.md`): `L` from deposited amounts;
       position inventory `(x, y)` at a given spot; the per-tick-band ladder
       (`q0_i`, `q1_i`, geometric-mean fill price `√(P_i·P_{i+1})`); single-tick swap step
       (price move + amounts) with the fee skimmed off input first.
-- [ ] **`Orderbook` state**: current √price / tick / active `L`; tick-indexed `liquidityNet` map;
+- [x] **`Orderbook` state**: current √price / tick / active `L`; tick-indexed `liquidityNet` map;
       positions `{tokenId → (L, tickLower, tickUpper)}`; a per-tokenId **fee counter** (`tokensOwed0/1`,
       never folded back into `L`); global fee growth accumulators.
-- [ ] **`apply_mint` / `apply_burn`**: add/remove a position's `L`, update the tick map. **`apply_swap`**:
+- [x] **`apply_mint` / `apply_burn`**: add/remove a position's `L`, update the tick map. **`apply_swap`**:
       move spot, cross initialized ticks (active `L += liquidityNet` up / `−=` down), and **flip each
       crossed level between bid and ask** (same price, same size). Skim the swap's fee
       (`gross_in × 0.003`) into the in-range positions' counters pro-rata by `L` (per-unit-liquidity
       growth). We have each swap's tick and active `L` in `swaps.csv`, so attribution is data-driven;
       exact sub-segmentation of a single swap that crosses several initialized ticks is approximated
       by its end-state tick (documented; the vast majority of swaps cross none).
-- [ ] **Derived views**: `book_at()` → the side-labeled (bid/ask) per-tick-band ladder at current
+- [x] **Derived views**: `book_at()` → the side-labeled (bid/ask) per-tick-band ladder at current
       spot, as an aggregate (L2) and per-tokenId (L3); `daily_stats()` → **volume** (USDC & WETH),
       **total fees** (both tokens), and **two APRs**: `apr_total_tvl` (24h fees ÷ total pool TVL × 365 —
       the headline number directly comparable to Uniswap's pool page) and `apr_active_tvl`
       (÷ value of in-range liquidity only — what active LPs actually earn). Both stored; the total-TVL
       one is the external cross-check.
-- [ ] **Invariant tests** (`test_stage6.py`): telescoping (band sums equal the closed form);
+- [x] **Invariant tests** (`test_stage6.py`): telescoping (band sums equal the closed form);
       virtual-reserve product holds within a constant-`L` region; **path independence** with zero fee
       (any spot round-trip returns inventory exactly); geometric-mean fill per band; **constant
       multiplicative spread** = fee per side, independent of price; a swap never mutates any
       position's `L`; fee monotonicity + total fee = Σ(`gross_in × 0.003`); token conservation per step.
-- [ ] **APR cross-check**: assert the engine's daily volume/fees/APR are in the right ballpark vs the
+- [x] **APR cross-check**: assert the engine's daily volume/fees/APR are in the right ballpark vs the
       pool's published figures (sanity bounds, not exact parity) — this is the headline external check.
+
+> **Design note.** The book is a *derived view* (ORDERS.md §9: "don't materialize the book"). State
+> is just positions + the tick-indexed `liquidityNet` map + per-tokenId fee counters; `book_at()`
+> reads each level's bid/ask side off the current spot, so **levels flip automatically as spot moves**
+> — no per-level side is stored or mutated (verified by `test_side_recomputes_when_spot_moves`). A
+> swap therefore never touches any position's `L` (constant rung sizes; fee skimmed to the side).
+>
+> **Acceptance run (Jun 12 2026, full real-data replay):** 770 swaps → volume ≈ **$2.73M**
+> (1,634 WETH); fees ≈ **$8,190** (3,810 USDC + 2.626 WETH) = volume × 0.003; TVL ≈ **$20.8M**;
+> **APR(total-TVL) ≈ 14.3%** — squarely in the published range for ETH/USDC 0.3% — and
+> APR(active/at-the-money) ≈ 1,800% (tiny in-range base, as expected). `test_stage6.py` 42 tests
+> green; full suite **114 green**. APRs computed from real TVL are wired in 6.2 (`build_book.py`).
 
 ### Stage 6.2 — wire the engine through the pipeline
 

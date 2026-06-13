@@ -5,12 +5,19 @@
 linked CSVs when present. The Orderbook engine invariants (6.1) and build_book shape (6.2) are
 appended to this file as those sub-stages land.
 """
+import math
 import os
 import unittest
 
 import link_positions as lp
+import orderbook_engine as ob
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _rel(a, b):
+    """Relative closeness, robust at the float magnitudes raw liquidity math produces."""
+    return abs(a - b) <= 1e-9 * max(1.0, abs(a), abs(b))
 
 
 def _csv(name):
@@ -174,6 +181,208 @@ class PositionsCsvTests(unittest.TestCase):
             self.skipTest("mints_linked.csv absent")
         # in this pool every in-window mint is NFPM-routed -> all linked
         self.assertTrue(all(r["tokenId"] for r in mints))
+
+
+# --- 6.1: engine math invariants (the ORDERS.md contract) --------------------
+
+class TickSqrtPriceTests(unittest.TestCase):
+    def test_zero_tick_is_one(self):
+        self.assertTrue(_rel(ob.tick_to_sqrt_price(0), 1.0))
+
+    def test_monotonic_in_tick(self):
+        self.assertLess(ob.tick_to_sqrt_price(100), ob.tick_to_sqrt_price(200))
+
+    def test_matches_price_definition(self):
+        # sP**2 == P == 1.0001**tick
+        self.assertTrue(_rel(ob.tick_to_sqrt_price(500) ** 2, 1.0001 ** 500))
+
+
+class TelescopingTests(unittest.TestCase):
+    """Summing band orders over sub-bands equals the single closed-form order. ORDERS.md §4."""
+    def test_q0_q1_sum_over_subbands(self):
+        L = 10 ** 18
+        ticks = [0, 60, 120, 180, 240]
+        sPs = [ob.tick_to_sqrt_price(t) for t in ticks]
+        q0_sum = sum(ob.band_order(L, sPs[i], sPs[i + 1])[0] for i in range(len(ticks) - 1))
+        q1_sum = sum(ob.band_order(L, sPs[i], sPs[i + 1])[1] for i in range(len(ticks) - 1))
+        self.assertTrue(_rel(q0_sum, L * (1 / sPs[0] - 1 / sPs[-1])))
+        self.assertTrue(_rel(q1_sum, L * (sPs[-1] - sPs[0])))
+
+
+class VirtualReserveTests(unittest.TestCase):
+    def test_product_is_L_squared_and_ratio_is_price(self):
+        L, sPa, sPb = 5 * 10 ** 17, ob.tick_to_sqrt_price(-300), ob.tick_to_sqrt_price(300)
+        sP = ob.tick_to_sqrt_price(50)
+        xv, yv = ob.virtual_reserves(L, sPa, sPb, sP)
+        self.assertTrue(_rel(xv * yv, float(L) ** 2))
+        self.assertTrue(_rel(yv / xv, sP ** 2))            # == P
+
+
+class PathIndependenceTests(unittest.TestCase):
+    """Zero-fee round trip returns spot and inventory exactly. ORDERS.md §7.3."""
+    def test_sell_then_buy_back_returns_spot(self):
+        L, sP = 10 ** 18, ob.tick_to_sqrt_price(100)
+        amount0_in = 10 ** 15
+        sP2, out1 = ob.swap_step(sP, L, amount0_in, zero_for_one=True)    # token0 in, price down
+        sP3, out0 = ob.swap_step(sP2, L, out1, zero_for_one=False)        # token1 back in, up
+        self.assertTrue(_rel(sP3, sP))
+        self.assertTrue(_rel(out0, amount0_in))
+
+
+class GeometricMeanFillTests(unittest.TestCase):
+    def test_band_fill_is_geomean(self):
+        L, sP_i, sP_j = 10 ** 18, ob.tick_to_sqrt_price(0), ob.tick_to_sqrt_price(120)
+        q0, q1, pbar = ob.band_order(L, sP_i, sP_j)
+        self.assertTrue(_rel(pbar, q1 / q0))
+        self.assertTrue(_rel(pbar, sP_i * sP_j))           # geometric mean of P_i, P_j
+
+
+class SwapStepConservationTests(unittest.TestCase):
+    def test_avg_fill_is_geomean_of_endpoints(self):
+        L, sP = 10 ** 18, ob.tick_to_sqrt_price(100)
+        a_in = 3 * 10 ** 15
+        sP2, out = ob.swap_step(sP, L, a_in, zero_for_one=True)
+        self.assertTrue(_rel(out / a_in, sP * sP2))        # blended price = sqrt(P*P')
+
+
+class SpreadTests(unittest.TestCase):
+    """Multiplicative half-spread equals the fee per side, independent of price. ORDERS.md §7.5."""
+    def test_constant_spread(self):
+        gamma = 0.003
+        for P in (0.5, 1.0, 1700.0, 1e6):
+            bid, ask = ob.marginal_prices(P, gamma)
+            self.assertTrue(_rel(ask / P, 1 / (1 - gamma)))
+            self.assertTrue(_rel(bid / P, 1 - gamma))
+
+
+class AprTests(unittest.TestCase):
+    def test_annualized(self):
+        self.assertTrue(_rel(ob.annualized_apr(100.0, 365000.0), 0.1))   # 100/365000*365
+        self.assertEqual(ob.annualized_apr(100.0, 0.0), 0.0)             # guard div-by-zero
+
+
+# --- 6.1: stateful book behaviour --------------------------------------------
+
+class OrderbookSwapTests(unittest.TestCase):
+    def setUp(self):
+        self.book = ob.Orderbook(gamma=0.003, d0=6, d1=18)
+        self.book.apply_mint("A", lo=200000, up=204000, L=10 ** 18)
+
+    def test_swap_never_mutates_position_L(self):
+        before = self.book.positions["A"]["L"]
+        self.book.apply_swap("buy", amount0=1000.0, amount1=0.6, price=1700.0,
+                             tick=202000, active_L=10 ** 18)
+        self.assertEqual(self.book.positions["A"]["L"], before)
+
+    def test_fee_skim_into_separate_counter(self):
+        self.book.apply_swap("buy", amount0=1000.0, amount1=0.6, price=1700.0,
+                             tick=202000, active_L=10 ** 18)   # USDC in -> fee in token0
+        self.assertTrue(_rel(self.book.fees0["A"], 1000.0 * 0.003))
+        self.assertEqual(self.book.fees1["A"], 0.0)
+
+    def test_out_of_range_position_earns_no_fee(self):
+        self.book.apply_swap("buy", amount0=1000.0, amount1=0.6, price=1700.0,
+                             tick=210000, active_L=10 ** 18)   # spot outside [200000,204000)
+        self.assertEqual(self.book.fees0["A"], 0.0)
+
+    def test_total_fee_equals_sum_gross_times_gamma(self):
+        swaps = [("buy", 1000.0, 0.6, 1700.0), ("sell", 0.0, 0.5, 1710.0),
+                 ("buy", 2000.0, 1.2, 1705.0)]
+        for side, a0, a1, px in swaps:
+            self.book.apply_swap(side, a0, a1, px, tick=202000, active_L=10 ** 18)
+        exp0 = (1000.0 + 2000.0) * 0.003
+        exp1 = 0.5 * 0.003
+        self.assertTrue(_rel(self.book.fee0_total, exp0))
+        self.assertTrue(_rel(self.book.fee1_total, exp1))
+
+
+class BookSideTests(unittest.TestCase):
+    def setUp(self):
+        self.book = ob.Orderbook(gamma=0.003, d0=6, d1=18)
+        self.book.apply_mint("A", lo=201000, up=203400, L=10 ** 18)
+        self.book.tick = 202200   # spot in the middle
+
+    def test_sides_flip_around_spot(self):
+        bands = self.book.book_at([201000, 201600, 202200, 202800, 203400])
+        sides = {(b["tick_lo"], b["tick_hi"]): b["side"] for b in bands}
+        # band entirely below current tick 202200 -> higher USDC/WETH -> ASK
+        self.assertEqual(sides[(201000, 201600)], "ask")
+        # band entirely above current tick -> lower USDC/WETH -> BID
+        self.assertEqual(sides[(202800, 203400)], "bid")
+
+    def test_side_recomputes_when_spot_moves(self):
+        # the SAME band flips side as spot crosses it (the core ORDERS.md behaviour)
+        hi = [b["side"] for b in self.book.book_at([201600, 202200], tick=203000)][0]
+        lo = [b["side"] for b in self.book.book_at([201600, 202200], tick=201000)][0]
+        self.assertEqual(hi, "ask")   # spot above band -> band below spot -> ask
+        self.assertEqual(lo, "bid")   # spot below band -> band above spot -> bid
+
+    def test_aggregate_is_sum_of_positions(self):
+        self.book.apply_mint("B", lo=201000, up=203400, L=3 * 10 ** 17)
+        band = self.book.book_at([201000, 201600])[0]
+        self.assertTrue(_rel(band["agg_q1"],
+                             sum(v["q1"] for v in band["positions"].values())))
+
+
+class HumanPriceTests(unittest.TestCase):
+    def test_usdc_per_weth_from_tick(self):
+        # the live pool sat near tick 202089 ~ 1674 USDC/WETH
+        px = ob.price_usdc_per_weth_from_tick(202089, 6, 18)
+        self.assertTrue(1500 < px < 1850)
+
+
+# --- 6.1: end-to-end replay on the real data (skips if CSVs absent) ----------
+
+class EngineReplayTests(unittest.TestCase):
+    def setUp(self):
+        meta = _csv("pool_metadata.csv")
+        swaps = _csv("swaps.csv")
+        if meta is None or swaps is None:
+            self.skipTest("pool_metadata.csv / swaps.csv absent (run Stage 1 + link_positions.py)")
+        self.meta, self.swaps = meta[0], swaps
+
+    def _replay(self):
+        m = self.meta
+        book = ob.Orderbook(gamma=float(m["gamma"]), d0=int(m["decimals0"]), d1=int(m["decimals1"]))
+        mints = _csv("mints_linked.csv") or []
+        burns = _csv("burns_linked.csv") or []
+        events = []
+        for r in mints:
+            events.append((int(r["block"]), int(r["logIndex"]), "mint", r))
+        for r in burns:
+            events.append((int(r["block"]), int(r["logIndex"]), "burn", r))
+        for r in self.swaps:
+            events.append((int(r["block"]), int(r["logIndex"]), "swap", r))
+        events.sort(key=lambda e: (e[0], e[1]))
+        d0, d1 = int(m["decimals0"]), int(m["decimals1"])
+        for _, _, kind, r in events:
+            if kind == "mint" and r["tokenId"]:
+                book.apply_mint(r["tokenId"], r["tickLower"], r["tickUpper"], r["amount"])
+            elif kind == "burn" and r["tokenId"] and int(r["amount"]) > 0:
+                book.apply_burn(r["tokenId"], r["tickLower"], r["tickUpper"], r["amount"])
+            elif kind == "swap":
+                a0, a1 = abs(float(r["amount0"])), abs(float(r["amount1"]))
+                side = "buy" if r["direction"] == "pool_received_token0" else "sell"
+                price = ob.price_usdc_per_weth_from_tick(int(r["tick"]), d0, d1)
+                book.apply_swap(side, a0, a1, price, int(r["tick"]), int(r["liquidity"]))
+        return book
+
+    def test_volume_and_fee_relationship(self):
+        book = self._replay()
+        s = book.daily_stats()
+        self.assertGreater(s["swap_count"], 0)
+        self.assertGreaterEqual(s["volume_usdc"], 0)
+        # fee_usdc must equal gamma * (USDC volume of buy-side swaps) <= gamma * total USDC volume
+        self.assertLessEqual(s["fee_usdc"], float(self.meta["gamma"]) * s["volume_usdc"] + 1e-6)
+        self.assertGreaterEqual(s["fee_usd"], 0)
+
+    def test_apr_is_finite_and_nonnegative(self):
+        book = self._replay()
+        # use a nominal TVL to exercise the APR path (real TVL comes from tvl_series in 6.2)
+        s = book.daily_stats(tvl_usd=1e7, active_tvl_usd=1e5)
+        self.assertGreaterEqual(s["apr_total_tvl"], 0)
+        self.assertGreater(s["apr_active_tvl"], s["apr_total_tvl"])   # smaller base -> higher APR
+        self.assertTrue(math.isfinite(s["apr_total_tvl"]))
 
 
 if __name__ == "__main__":

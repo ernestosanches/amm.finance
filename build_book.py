@@ -12,8 +12,9 @@ Unlike the Stage 4.3 range view, this is the *virtual limit-order book*: per-ban
 uneven (uniform in sqrt-price), and each level's side (bid = buy WETH / ask = sell WETH) is read
 off the moving spot, so levels flip as price crosses them.
 
-A fixed price grid (every initialized tick in a window around the day's price range) is computed
-once up front so the bands — and the x-axis — stay stable across slices (no flicker).
+A fixed price grid (uniform, every pool `tickSpacing` ticks, in a window around the day's price
+range) is computed once up front so the bands stay equal-width and stable across slices: no gaps,
+no flicker, and each position is sliced into its smooth per-band order-size profile.
 
 Usage:
   python build_book.py                          # with pre-existing baseline (default)
@@ -76,15 +77,19 @@ def apply_event(book, kind, r, d0, d1):
     return None
 
 
-def fixed_grid(mints, burns, baseline_net, swaps, window):
-    """Stable band boundaries = every initialized tick within ±window of the day's price range."""
+def fixed_grid(spacing, swaps, window):
+    """Uniform tickSpacing-aligned band boundaries within ±window of the day's price range.
+
+    `spacing` = the pool's tickSpacing (from pool_metadata.csv) — the finest resolution at which
+    liquidity can exist, and the natural band size. Equal spacing-wide bands tile with no gaps and
+    slice every position into the smooth per-band order-size profile (q1 ∝ √price). Using the union
+    of *initialized* ticks instead (the old approach) gave unequal, sparse bands — varying gaps and
+    blocky single-order bars — so this is the corrected grid.
+    """
     swap_ticks = [int(r["tick"]) for r in swaps] or [0]
-    lo_win, hi_win = min(swap_ticks) - window, max(swap_ticks) + window
-    ticks = set(baseline_net)
-    for r in mints + burns:
-        ticks.add(int(r["tickLower"]))
-        ticks.add(int(r["tickUpper"]))
-    return sorted(t for t in ticks if lo_win <= t <= hi_win), (lo_win, hi_win)
+    lo_win = (min(swap_ticks) - window) // spacing * spacing
+    hi_win = (max(swap_ticks) + window) // spacing * spacing + spacing
+    return list(range(lo_win, hi_win + spacing, spacing)), (lo_win, hi_win)
 
 
 def main():
@@ -99,7 +104,7 @@ def main():
     meta = pool_meta.load()
     if not meta:
         raise SystemExit("pool_metadata.csv absent — run link_positions.py (Stage 6.0) first.")
-    d0, d1, gamma = meta["decimals0"], meta["decimals1"], meta["gamma"]
+    d0, d1, gamma, spacing = meta["decimals0"], meta["decimals1"], meta["gamma"], meta["tickSpacing"]
 
     mints, burns = read_csv("mints_linked.csv"), read_csv("burns_linked.csv")
     swaps = read_csv("swaps.csv")
@@ -115,7 +120,7 @@ def main():
     times_all = [int(r["timestamp"]) for *_, r in events]
     start_ts, end_ts = min(times_all), max(times_all)
     times = slice_times(start_ts, end_ts, args.slices)
-    grid, (lo_win, hi_win) = fixed_grid(mints, burns, baseline_net, swaps, args.window)
+    grid, (lo_win, hi_win) = fixed_grid(spacing, swaps, args.window)
 
     book = ob.Orderbook(gamma=gamma, d0=d0, d1=d1)
     if baseline_net:

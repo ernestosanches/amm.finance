@@ -297,8 +297,11 @@ cross-checkable by-product.
   `IncreaseLiquidity`/`DecreaseLiquidity` with an indexed `tokenId` in the **same transaction** as
   each pool Mint/Burn. Joining by transaction recovers the tokenId, which **links every Add to its
   later Removes**. tokenId is the stable position id (better than wallet — the NFT can be transferred).
-- "Individual order" granularity = **per-tokenId position × per-initialized-tick band**. There is no
-  atomic order finer than `(position, tick band)`; that is as deep as on-chain reality goes.
+- "Individual order" granularity = **per-tokenId position × per-`tickSpacing` band**. (Corrected: the
+  ladder is drawn on a **uniform `tickSpacing` grid** from `pool_metadata.csv`, not the union of
+  *initialized* ticks — see the reconciliation note under 6.2.1. `tickSpacing` is the finest resolution
+  liquidity can use, so equal-width bands tile with no gaps and reveal each order's smooth `q1 ∝ √P`
+  size profile; initialized ticks only mark where the *aggregate* `L` steps.)
 - The pre-existing baseline (`initial_liquidity.csv`) is an **aggregate** `liquidityNet` profile and
   **cannot be attributed per-LP**. It is modelled as **one synthetic "pre-existing" position** whose
   aggregate L-profile is still expanded into per-tick-band virtual orders and flipped by spot — it
@@ -393,11 +396,11 @@ existing range-view figures (both sets served), so the two can be compared.
       book-over-time CSVs: `book_l2.csv` (aggregate bid/ask depth per tick band per slice) and
       `book_l3.csv` (per-tokenId order per tick band per slice, side-labeled), plus
       `daily_metrics.csv` (volume, fees, APR). Honours with/without-initial (synthetic baseline
-      position on/off). A **fixed price grid** (every initialized tick in a ±window) is computed once
-      so bands/x-axis stay stable across slices (no flicker). `daily_metrics.csv` is pool-level and is
-      written **only on the with-initial run** (active TVL needs the full book). Verified on Jun-12
-      data: with-initial ≈119 bands/slice, without-initial ≈11; in the last slice asks sit above spot
-      / bids below, split 60/58 around the mid; **L3 sums exactly to L2 per band** (tested);
+      position on/off). A **fixed, uniform `tickSpacing` price grid** (from `pool_metadata.csv`) over a
+      ±window is computed once so bands are equal-width and stable across slices (no gaps, no flicker).
+      `daily_metrics.csv` is pool-level and is written **only on the with-initial run** (active TVL
+      needs the full book). Verified on Jun-12 data: in the last slice asks sit above spot
+      / bids below, split around the mid; **L3 sums exactly to L2 per band** (tested);
       `daily_metrics` = 770 swaps, $2.73M volume, $8.2k fees, **APR(total)=14.5%**, APR(active)≈1,800%.
 - [x] **6.2.2 `plot_book.py`** — render the virtual book: x = price (USDC per WETH, ascending L→R =
       conventional book), **L2** depth split bid (green, below spot) vs ask (red, above spot) with a
@@ -424,6 +427,22 @@ visibly **flip bid↔ask as spot moves across the day**, plus a `daily_metrics.c
 and an APR that lands in a sane range vs Uniswap's published number; `python run_all.py --figures-only`
 rebuilds all 8 HTML and `serve.py` lists them; `test_stage6.py` green and `python tests.py` stays
 green (132). ✅ Met.
+
+### 6.2.5 — Grid reconciliation (supersedes the earlier "per initialized tick" choice)
+
+A review of the rendered figures showed two artefacts, both rooted in drawing bands on the **union of
+initialized ticks** (sparse and unevenly spaced): (a) bars of varying width with gaps, and (b) a single
+order rendered as a few blocky bars instead of its smooth `q1 ∝ √P` profile (initialized ticks only mark
+where the *aggregate* `L` steps, not where a position's virtual orders live). Reconciled all figures to a
+**uniform grid at the pool's `tickSpacing`** (read from `pool_metadata.csv`; 60 for this 0.30% pool — the
+fee tier fixes it: 0.01%→1, 0.05%→10, 0.30%→60, 1%→200):
+
+- `build_book.py` `fixed_grid()` → uniform `tickSpacing`-aligned bands; `plot_book.py` bar `width` = the
+  band width → bars tile exactly (no gaps) and each position is sliced into its smooth size profile.
+- `plot_orderbook.py` (range-view L3) → same `tickSpacing` grid within the display window, bar `width` =
+  `tickSpacing`; and its price axis **reversed to ascending L→R** so every figure shares one orientation.
+- Generic via metadata: a 0.05%/1% pool would automatically use spacing 10/200. Verified by
+  headless-Chromium render (equal-width contiguous bars; smooth per-order curves). Suite **134 green**.
 
 ---
 

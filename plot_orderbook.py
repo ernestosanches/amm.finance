@@ -162,7 +162,7 @@ def _baseline_by_level(baseline_curve, levels):
 
 
 def build_orderbook_figure(ob_rows, slices=None, k_levels=140, d0=6, d1=18,
-                           xtick_range=None, baseline_curve=None):
+                           xtick_range=None, baseline_curve=None, spacing=60):
     """L3 order book: at each price, a stacked bar of the individual LP positions (orders).
 
     With `baseline_curve` (start-of-range absolute liquidity per tick), a grey base layer of the
@@ -181,7 +181,12 @@ def build_orderbook_figure(ob_rows, slices=None, k_levels=140, d0=6, d1=18,
     los = [int(r["tickLower"]) for r in ob_rows]
     ups = [int(r["tickUpper"]) for r in ob_rows]
     tmin, tmax = min(los), max(ups)
-    levels = [round(tmin + (tmax - tmin) * i / (k_levels - 1)) for i in range(k_levels)]
+    if xtick_range:  # uniform tickSpacing grid across the (bounded) display window -> equal bands
+        lo_t = xtick_range[0] // spacing * spacing
+        hi_t = xtick_range[1] // spacing * spacing + spacing
+        levels = list(range(lo_t, hi_t + spacing, spacing))
+    else:            # no window given: fall back to bounded even interpolation over the full span
+        levels = [round(tmin + (tmax - tmin) * i / (k_levels - 1)) for i in range(k_levels)]
     prices = [tick_to_price(t, d0, d1) for t in levels]
     base_y = _baseline_by_level(baseline_curve, levels)
 
@@ -195,12 +200,14 @@ def build_orderbook_figure(ob_rows, slices=None, k_levels=140, d0=6, d1=18,
         lo, up = pid.split("_")
         return f"[{lo}, {up}]"
 
+    bar_w = spacing if xtick_range else None  # exact tiling on the tickSpacing grid; auto otherwise
+
     def frame_traces(rows):
         traces = []
         if base_y is not None:  # grey base layer = pre-existing aggregate, stacked first (bottom)
             traces.append(go.Bar(
                 x=levels, y=base_y, customdata=prices, name="pre-existing (baseline)",
-                marker_color="#cccccc", legendgroup="baseline",
+                marker_color="#cccccc", legendgroup="baseline", width=bar_w,
                 hovertemplate=("pre-existing baseline<br>price %{customdata:.0f} USDC/WETH"
                                "<br>L %{y:.3g}<extra></extra>")))
         active = {r["pos_id"]: (int(r["tickLower"]), int(r["tickUpper"]), int(r["L"])) for r in rows}
@@ -209,7 +216,7 @@ def build_orderbook_figure(ob_rows, slices=None, k_levels=140, d0=6, d1=18,
             y = [L if (L > 0 and lo <= t < up) else 0 for t in levels]
             traces.append(go.Bar(
                 x=levels, y=y, customdata=prices, name=label(p),
-                marker_color=PALETTE[k % len(PALETTE)], legendgroup=p,
+                marker_color=PALETTE[k % len(PALETTE)], legendgroup=p, width=bar_w,
                 hovertemplate=(f"order {label(p)}<br>price %{{customdata:.0f}} USDC/WETH"
                                "<br>L %{y:.3g}<extra></extra>")))
         return traces
@@ -233,14 +240,16 @@ def build_orderbook_figure(ob_rows, slices=None, k_levels=140, d0=6, d1=18,
     init_i = idxs[start_pos]
     fig = go.Figure(data=frame_traces(groups[init_i][1]), frames=frames)
 
-    if xtick_range:  # window the price axis (x data is tick; labels are price) with labels inside it
+    # x data is tick; labels are price. Price falls as tick rises, so reverse the axis (hi->lo tick)
+    # to show price ASCENDING left->right — consistent with every other figure.
+    if xtick_range:  # window the price axis with labels inside it
         lo_t, hi_t = xtick_range
         tvals = [round(lo_t + (hi_t - lo_t) * j / 6) for j in range(7)]
-        xaxis = {"title": "Price (USDC per WETH)", "tickmode": "array", "range": xtick_range,
+        xaxis = {"title": "Price (USDC per WETH)", "tickmode": "array", "range": [hi_t, lo_t],
                  "tickvals": tvals, "ticktext": [f"{tick_to_price(t, d0, d1):,.0f}" for t in tvals]}
     else:
         sel = sorted(set(int(round(j * (k_levels - 1) / 7)) for j in range(8)))
-        xaxis = {"title": "Price (USDC per WETH)", "tickmode": "array",
+        xaxis = {"title": "Price (USDC per WETH)", "tickmode": "array", "autorange": "reversed",
                  "tickvals": [levels[i] for i in sel], "ticktext": [f"{prices[i]:,.0f}" for i in sel]}
 
     if base_y is not None:
@@ -290,8 +299,9 @@ def main():
     args = ap.parse_args()
 
     os.makedirs(OUT, exist_ok=True)
-    meta = pool_meta.load()           # decimals from the single source of truth (else 6/18)
+    meta = pool_meta.load()           # decimals + tickSpacing from the single source of truth
     d0, d1 = pool_meta.decimals(meta)
+    spacing = meta["tickSpacing"] if meta else 60
     depth = read_csv("depth_slices.csv")
     ob = read_csv("orderbook_slices.csv")
     base = read_csv("orderbook_baseline.csv")  # populated only on a with-initial run
@@ -306,7 +316,7 @@ def main():
     if ob:
         print("  ->", write_html(
             build_orderbook_figure(ob, slices, d0=d0, d1=d1, xtick_range=xwin,
-                                   baseline_curve=baseline_curve),
+                                   baseline_curve=baseline_curve, spacing=spacing),
             os.path.join(OUT, "orderbook.html")))
     print("Done. Open the HTML files in a browser (self-contained, shareable).")
 

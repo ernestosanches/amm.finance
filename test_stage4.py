@@ -309,7 +309,9 @@ class OrderbookFigureTests(unittest.TestCase):
         rows = [{"slice_idx": "1", "slice_time": "1", "slice_dt": "2026-06-12T06:00:00",
                  "pos_id": "0_300", "mint_time": "1", "tickLower": "0", "tickUpper": "300", "L": "5"}]
         fig = self.po.build_orderbook_figure(rows, [(1, "06:00")], xtick_range=[50, 250])
-        self.assertEqual(list(fig.layout.xaxis.range), [50, 250])
+        # axis reversed (hi->lo tick) so price ascends left->right; window endpoints preserved
+        self.assertEqual(sorted(fig.layout.xaxis.range), [50, 250])
+        self.assertEqual(list(fig.layout.xaxis.range), [250, 50])
 
     def test_orderbook_baseline_stacked_under_orders(self):
         # with baseline_curve: a grey base layer is the FIRST stacked trace; Y top includes it

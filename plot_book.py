@@ -77,10 +77,16 @@ def _metrics_line(metrics):
 
 # --- Level-2 aggregate depth (bid/ask) ---------------------------------------
 
+def _band_width(rows):
+    """The (uniform tickSpacing) band width, so bars exactly tile the axis with no gaps."""
+    return min(int(r["tick_hi"]) - int(r["tick_lo"]) for r in rows)
+
+
 def build_l2_figure(l2_rows, d0, d1, logy=False, metrics=None):
     groups = _slices(l2_rows)
     midof = lambda r: (int(r["tick_lo"]) + int(r["tick_hi"])) // 2
     all_mids = [midof(r) for r in l2_rows]
+    bw = _band_width(l2_rows)
     depths = [float(r["depth_weth"]) for r in l2_rows]
     use_log = logy and depths and min(depths) > 0
     if use_log:
@@ -93,7 +99,7 @@ def build_l2_figure(l2_rows, d0, d1, logy=False, metrics=None):
     def side_trace(rows, side, name):
         rr = sorted((r for r in rows if r["side"] == side), key=midof)
         return go.Bar(x=[midof(r) for r in rr], y=[float(r["depth_weth"]) for r in rr],
-                      marker_color=SIDE_COLOR[side], name=name, legendgroup=side, width=55,
+                      marker_color=SIDE_COLOR[side], name=name, legendgroup=side, width=bw,
                       customdata=[float(r["price"]) for r in rr],
                       hovertemplate=(f"{name}<br>price %{{customdata:.0f}} USDC/WETH"
                                      "<br>%{y:.3f} WETH<extra></extra>"))
@@ -132,6 +138,7 @@ def build_l3_figure(l3_rows, d0, d1, metrics=None):
         return go.Figure()
     bands = sorted({(int(r["tick_lo"]), int(r["tick_hi"])) for r in l3_rows})
     mids = [(lo + hi) // 2 for lo, hi in bands]
+    bw = _band_width(l3_rows)
     band_ix = {b: k for k, b in enumerate(bands)}
 
     # token order: baseline first (bottom of the stack), then by first appearance
@@ -157,7 +164,7 @@ def build_l3_figure(l3_rows, d0, d1, metrics=None):
         for k, t in enumerate(tokens):
             grey = t == "baseline"
             traces.append(go.Bar(
-                x=mids, y=ymap[t], width=55,
+                x=mids, y=ymap[t], width=bw,
                 name="pre-existing (baseline)" if grey else t,
                 marker_color="#cccccc" if grey else PALETTE[(k - 1) % len(PALETTE)],
                 legendgroup=t,

@@ -431,17 +431,24 @@ class BuildEventsTests(unittest.TestCase):
 
 
 class FixedGridTests(unittest.TestCase):
-    def test_windows_and_includes_position_boundaries(self):
-        mints = [{"tickLower": "201000", "tickUpper": "203000"}]
-        burns = []
-        baseline = {200000: 1, 202000: 1, 500000: 1}   # 500000 is far outside the window
-        swaps = [{"tick": "202000"}]
-        grid, (lo, hi) = bb.fixed_grid(mints, burns, baseline, swaps, window=3000)
-        self.assertEqual((lo, hi), (199000, 205000))
-        self.assertIn(201000, grid)       # position boundary inside window
-        self.assertIn(203000, grid)
-        self.assertNotIn(500000, grid)    # outside window dropped
-        self.assertEqual(grid, sorted(grid))
+    def test_uniform_tickspacing_grid_no_gaps(self):
+        swaps = [{"tick": "202050"}]
+        grid, (lo, hi) = bb.fixed_grid(spacing=60, swaps=swaps, window=3000)
+        # aligned to multiples of 60 (the pool tickSpacing), covering ±window of the price
+        self.assertEqual(lo % 60, 0)
+        self.assertEqual(hi % 60, 0)
+        self.assertLessEqual(lo, 202050 - 3000)
+        self.assertGreaterEqual(hi, 202050 + 3000)
+        # every band is exactly tickSpacing wide -> equal width, no gaps
+        widths = {grid[i + 1] - grid[i] for i in range(len(grid) - 1)}
+        self.assertEqual(widths, {60})
+
+    def test_grid_scales_with_spacing(self):
+        swaps = [{"tick": "0"}]
+        g10, _ = bb.fixed_grid(spacing=10, swaps=swaps, window=100)
+        g200, _ = bb.fixed_grid(spacing=200, swaps=swaps, window=1000)
+        self.assertEqual({g10[i + 1] - g10[i] for i in range(len(g10) - 1)}, {10})
+        self.assertEqual({g200[i + 1] - g200[i] for i in range(len(g200) - 1)}, {200})
 
 
 class ApplyEventTests(unittest.TestCase):
@@ -463,6 +470,11 @@ class BookCsvTests(unittest.TestCase):
         self.l3 = _csv("book_l3.csv")
         if self.l2 is None:
             self.skipTest("book_l2.csv absent (run build_book.py)")
+
+    def test_bands_are_uniform_tickspacing_no_gaps(self):
+        spacing = pool_meta.load()["tickSpacing"]
+        widths = {int(r["tick_hi"]) - int(r["tick_lo"]) for r in self.l2}
+        self.assertEqual(widths, {spacing})   # every band is exactly one tickSpacing -> no gaps
 
     def test_side_consistent_with_active_tick(self):
         for r in self.l2:

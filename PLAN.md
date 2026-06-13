@@ -176,19 +176,23 @@ GIF/MP4 is an easy non-interactive teaser. Keep X-axis = **union of all position
       (log can't show ≤0, and the old `[0, max]` range was clipping the negative bars). `--linear`
       overrides. Heatmap colour is `log10(L)`.
 
-### Stage 4.4 — Viewing / sharing helper (`serve.py`)  — IN PROGRESS, not yet committed
+### Stage 4.4 — Viewing helper (`serve.py`)
 
-Goal: a simple static server so the generated `out/*.html` figures can be viewed from a remote
-host (SSH / Cursor port-forward) or a host's public port mapping.
+Goal: serve the generated `out/*.html` for viewing. **Default is local-only** (binds `127.0.0.1`);
+remote viewing is via an **SSH / Cursor port-forward** (authenticated). An **opt-in `--tunnel`**
+exposes a public link for a deliberate quick share — never on by default.
 
-- [x] **`serve.py`** — serve a directory (default `out/`) over a chosen host/port; lists every
-      `.html` with its full URL. `--host 0.0.0.0` + `--url http://HOST:PUBLIC_PORT` for public
-      mappings (e.g. Vast.ai). Binds `127.0.0.1` by default (SSH-tunnel friendly).
-- [ ] **Pending fixes (do later — keep `serve.py` OUT of commits until done):** smoother remote/Vast
-      viewing (e.g. auto-pick a free port, clearer public-URL guidance, optional auto-open). On Vast
-      all published ports were already busy → the working path is the SSH tunnel / Cursor forward.
-- [ ] Tests (per standing rule, add when finalized): smoke test that the server starts and returns a
-      file (HTTP 200), or a thin unit test of the URL/listing logic.
+- [x] **`serve.py`** (default = local) — serve `out/` on `127.0.0.1:<port>`; list every `.html`
+      with its localhost URL; highlight one page with a positional arg. Loopback only.
+- [x] **`--tunnel` (opt-in)** — also start a cloudflared **quick tunnel** and print the PUBLIC,
+      no-auth, ephemeral URL (cloudflared auto-discovered). Clearly flagged as public; used only when
+      asked for. Works on Vast, where every published port is occupied by Vast's own services so the
+      direct/forward paths aren't viable.
+- [x] **Robust teardown (tunnel mode)** — cleaned up on **every** exit path (Ctrl+C / `kill` /
+      SIGTERM / normal exit / cloudflared dying): cloudflared runs in its own session, killed by
+      process group via `signal` handlers + `atexit` — no orphaned tunnel left running.
+- [x] Tests (`test_serve.py`): URL listing + link formatting (pure), a real bind-and-GET asserting
+      HTTP 200 / 404 on a `127.0.0.1` socket, tunnel-URL parsing, and process-group teardown.
 
 Acceptance: 4.1 writes `initial_liquidity.csv` (verified vs `liquidity()`) and `usage.csv`;
 4.2 plots an absolute depth curve using it (degrading gracefully when absent); 4.3 writes a shareable
@@ -242,6 +246,9 @@ Dependency-free, using the standard library `unittest`. One runner + one file pe
   `initial_liquidity.csv` validation (4.1); absolute curve = baseline + net change (4.2); position-replay
   membership (mint⇒active, burn⇒absent, per-slice `L`) + standalone-HTML smoke test (4.3, skips if
   `plotly` absent). Network reads (Multicall3 snapshot) are exercised by running 4.1, not in unit tests.
+- **`test_serve.py`** — Stage 4.4: URL listing + link formatting (pure), a real bind-and-GET
+  asserting HTTP 200 / 404 on a loopback-bound port, tunnel-URL parsing, and process-group teardown.
+- **`test_stage5.py`** — Stage 5: `plan_steps()` ordering, both order-book variants, 4 HTML targets.
 
 Every stage ships its tests in the same commit as its code, and `python tests.py` must stay green.
 Tests do not hit the network — Stage 1 network behavior is verified by actually running the
@@ -266,9 +273,9 @@ plot.py                           # Stage 3 (+ 4.2) — PNG plots, optional init
 usage.py                          # Stage 4.1 — RPC call counter (-> usage.csv)
 tick_snapshot.py                  # Stage 4.1 — absolute L2 start snapshot (-> initial_liquidity.csv)
 orderbook.py + plot_orderbook.py  # Stage 4.3 — L3 book over time (-> out/orderbook.html)
-serve.py                          # Stage 4.4 — view HTML over SSH/port-forward (WIP, uncommitted)
+serve.py                          # Stage 4.4 — viewer: local default + opt-in --tunnel (public share)
 run_all.py                        # Stage 5 — one-command pipeline (all CSVs/PNGs/4 HTML)
-tests.py + test_stage{1..5}.py    # test runner + per-stage tests
+tests.py + test_stage{1..5}.py + test_serve.py   # test runner + per-stage tests
 requirements.txt                  # pinned deps (web3, matplotlib, +plotly at Stage 4.3)
 README.md                         # public-facing project pitch
 DETAILS.md                        # technical overview, status, v2/v3 + level-1/2/3 notes

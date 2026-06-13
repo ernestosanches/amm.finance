@@ -184,6 +184,11 @@ def main():
                "tickLower", "tickUpper", "L"])
     write_csv("depth_slices.csv", depth_rows,
               ["slice_idx", "slice_time", "slice_dt", "active_tick", "tick", "cumulative_L"])
+    # Absolute pre-existing baseline per tick (start-of-range standing book) for the order book's
+    # "with initial" base layer. Empty when --no-initial-liquidity -> the figure shows orders only.
+    base_rows = [{"tick": int(r["tick"]), "baseline_L": int(r["cumulative_liquidity"])}
+                 for r in initial]
+    write_csv("orderbook_baseline.csv", base_rows, ["tick", "baseline_L"])
     print(f"slices={len(times)}  positions(in-window)={len(first_mint)}  depth basis={basis}. Done.")
 
 

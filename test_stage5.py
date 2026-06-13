@@ -38,17 +38,38 @@ class PlanStepsTests(unittest.TestCase):
         self.assertIn("2026-06-12", dl)
         self.assertIn("2026-06-13", dl)
 
-    def test_produces_four_html_copies(self):
+    def test_two_versions_per_level_no_with_initial_dup(self):
         targets = [dst for _, dst in self._copies()]
-        for h in run_all.EXPECTED_HTML:
-            self.assertIn(h, targets)
-        self.assertEqual(len(targets), 4)
+        # both levels get a __without_initial copy; the with-initial views are the canonicals
+        # (out/orderbook.html, out/depth_over_time.html) -> no __with_initial duplicates.
+        self.assertEqual(sorted(targets), ["out/depth_over_time__without_initial.html",
+                                           "out/orderbook__without_initial.html"])
+        self.assertFalse(any("__with_initial" in t for t in targets))
+        for h in ("out/orderbook.html", "out/orderbook__without_initial.html",
+                  "out/depth_over_time.html", "out/depth_over_time__without_initial.html"):
+            self.assertIn(h, run_all.EXPECTED_HTML)
 
-    def test_with_initial_copied_last(self):
-        # canonical out/*.html should end up = the WITH-initial run -> its copies come last
-        copies = self._copies()
-        last_two_dst = [dst for _, dst in copies[-2:]]
-        self.assertTrue(all("__with_initial" in d for d in last_two_dst))
+    def test_with_initial_runs_last(self):
+        # canonical out/*.html must end as the absolute (with-initial) view -> the LAST orderbook.py
+        # run has no --no-initial-liquidity.
+        runs = [st["run"] for st in self.steps if "run" in st]
+        last_ob = max(i for i, c in enumerate(runs) if c[1] == "orderbook.py")
+        self.assertNotIn("--no-initial-liquidity", runs[last_ob])
+
+    def test_log_flag_propagates_to_figures(self):
+        steps = run_all.plan_steps("0xP", "2026-06-12", "2026-06-13", 24, log=True)
+        plots = [st["run"] for st in steps if "run" in st and st["run"][1] == "plot_orderbook.py"]
+        self.assertTrue(plots and all("--log" in c for c in plots))
+        # off by default
+        plots0 = [st["run"] for st in self.steps if "run" in st and st["run"][1] == "plot_orderbook.py"]
+        self.assertTrue(all("--log" not in c for c in plots0))
+
+    def test_figures_only_skips_pipeline(self):
+        steps = run_all.plan_steps("0xP", "2026-06-12", "2026-06-13", 24, figures_only=True)
+        scripts = [st["run"][1] for st in steps if "run" in st]
+        self.assertNotIn("uniswap_v3_pool_download_rpc.py", scripts)  # no download
+        self.assertIn("orderbook.py", scripts)                       # but rebuilds figures
+        self.assertIn("plot_orderbook.py", scripts)
 
     def test_no_baseline_rpc_flag(self):
         steps = run_all.plan_steps("0xP", "2026-06-12", "2026-06-13", 24, baseline_rpc=False)

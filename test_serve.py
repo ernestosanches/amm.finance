@@ -37,6 +37,16 @@ class ListUrlsTests(unittest.TestCase):
         self.assertEqual(lines[0], "  http://x/a.html")
         self.assertTrue(lines[1].endswith("b.html  <-- this one"))
 
+    def test_key_link_lines_surfaces_key_files_in_order(self):
+        urls = [("zzz.html", "http://x/zzz.html"),
+                ("depth_over_time.html", "http://x/depth_over_time.html"),
+                ("orderbook.html", "http://x/orderbook.html")]
+        lines = serve.key_link_lines(urls)
+        # KEY_FILES order: orderbook first, then the depth views; numbered; absent ones skipped
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("  1)") and lines[0].endswith("orderbook.html"))
+        self.assertTrue(lines[1].startswith("  2)") and lines[1].endswith("depth_over_time.html"))
+
 
 class TunnelHelperTests(unittest.TestCase):
     def test_find_tunnel_url(self):

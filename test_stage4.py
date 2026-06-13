@@ -241,15 +241,95 @@ class OrderbookFigureTests(unittest.TestCase):
         fig = self.po.build_depth_figure(self._depth((100, 50)), logy=False)
         self.assertNotEqual(fig.layout.yaxis.type, "log")
 
+    def test_tick_to_price(self):
+        # tick 0 -> raw price 1; decimal-adjust by 10^(6-18) -> USDC/WETH = 1e12 ... so a sane
+        # ETH price lands at a large positive tick. Just check monotonic + positivity here.
+        self.assertGreater(self.po.tick_to_price(202089), 1000)   # ~ETH price band
+        self.assertLess(self.po.tick_to_price(202089), 3000)
+        # higher tick => more WETH per USDC => CHEAPER USDC-per-WETH
+        self.assertLess(self.po.tick_to_price(203000), self.po.tick_to_price(201000))
+
     def test_orderbook_html(self):
         rows = [{"slice_idx": "0", "slice_time": "100", "slice_dt": "2026-06-12T06:00:00+00:00",
                  "pos_id": "10_20", "mint_time": "100", "tickLower": "10", "tickUpper": "20",
                  "L": "100"}]
         fig = self.po.build_orderbook_figure(rows)
-        self.assertEqual(len(fig.data[0].x), 1)  # one position column
+        self.assertEqual(fig.layout.barmode, "stack")
+        self.assertEqual(len(fig.data), 1)  # one trace per position (one order here)
         with tempfile.TemporaryDirectory() as d:
             p = self.po.write_html(fig, os.path.join(d, "ob.html"))
             self.assertGreater(os.path.getsize(p), 0)
+
+    def test_orderbook_stacks_positions_and_has_units(self):
+        # two positions that overlap on a tick band -> both contribute (stack) there
+        rows = [
+            {"slice_idx": "1", "slice_time": "100", "slice_dt": "2026-06-12T06:00:00+00:00",
+             "pos_id": "0_300", "mint_time": "90", "tickLower": "0", "tickUpper": "300", "L": "5"},
+            {"slice_idx": "1", "slice_time": "100", "slice_dt": "2026-06-12T06:00:00+00:00",
+             "pos_id": "100_200", "mint_time": "100", "tickLower": "100", "tickUpper": "200",
+             "L": "7"},
+        ]
+        fig = self.po.build_orderbook_figure(rows, [(0, "00:00"), (1, "06:00")])
+        # opens on first non-empty frame (index 1), not the blank slice 0
+        self.assertEqual(fig.layout.sliders[0].active, 1)
+        self.assertEqual(len(fig.data), 2)  # two position traces (stacked)
+        # at a tick inside BOTH ranges (e.g. 150) both traces are > 0 => they stack
+        levels = list(fig.data[0].x)
+        mid = min(range(len(levels)), key=lambda i: abs(levels[i] - 150))
+        self.assertGreater(fig.data[0].y[mid], 0)
+        self.assertGreater(fig.data[1].y[mid], 0)
+        # scientific axes: titles carry units
+        self.assertIn("Price (USDC per WETH)", fig.layout.xaxis.title.text)
+        self.assertIn("Active liquidity", fig.layout.yaxis.title.text)
+
+    def test_depth_fixed_global_yrange(self):
+        # depth Y is fixed across frames (no flicker): layout has a range, frames carry none
+        depth = [{"slice_idx": "0", "slice_dt": "2026-06-12T00:00:00+00:00", "active_tick": "12",
+                  "tick": "10", "cumulative_L": "100"},
+                 {"slice_idx": "0", "slice_dt": "2026-06-12T00:00:00+00:00", "active_tick": "12",
+                  "tick": "20", "cumulative_L": "50"}]
+        fig = self.po.build_depth_figure(depth, logy=True)
+        self.assertIsNotNone(fig.layout.yaxis.range)
+        self.assertIsNone(fig.frames[0].layout.yaxis.range)
+
+    def test_orderbook_y_is_fixed_no_flicker(self):
+        # Y is ONE fixed range for all frames (zero rescales -> no flicker): layout has the range,
+        # frames carry none. Range top = global max total (here the 1,000,000 order) + 5% pad.
+        rows = []
+        for idx, (L, dt) in enumerate([("100", "06:00"), ("1000000", "07:00"), ("50", "08:00")], 1):
+            rows.append({"slice_idx": str(idx), "slice_time": "1", "slice_dt": f"2026-06-12T{dt}:00",
+                         "pos_id": "10_20", "mint_time": "1", "tickLower": "10", "tickUpper": "20",
+                         "L": L})
+        slices = [(1, "06:00"), (2, "07:00"), (3, "08:00")]
+        fig = self.po.build_orderbook_figure(rows, slices)
+        self.assertTrue(all(f.layout.yaxis.range is None for f in fig.frames))  # no per-frame Y
+        self.assertAlmostEqual(fig.layout.yaxis.range[1], 1_000_000 * 1.05)     # fixed global top
+
+    def test_orderbook_xtick_window_applied(self):
+        rows = [{"slice_idx": "1", "slice_time": "1", "slice_dt": "2026-06-12T06:00:00",
+                 "pos_id": "0_300", "mint_time": "1", "tickLower": "0", "tickUpper": "300", "L": "5"}]
+        fig = self.po.build_orderbook_figure(rows, [(1, "06:00")], xtick_range=[50, 250])
+        self.assertEqual(list(fig.layout.xaxis.range), [50, 250])
+
+    def test_orderbook_baseline_stacked_under_orders(self):
+        # with baseline_curve: a grey base layer is the FIRST stacked trace; Y top includes it
+        rows = [{"slice_idx": "1", "slice_time": "1", "slice_dt": "2026-06-12T06:00:00",
+                 "pos_id": "100_200", "mint_time": "1", "tickLower": "100", "tickUpper": "200",
+                 "L": "7"}]
+        baseline = [(0, 1000), (150, 1000)]  # absolute baseline ~1000 across the range
+        fig = self.po.build_orderbook_figure(rows, [(1, "06:00")], baseline_curve=baseline)
+        self.assertEqual(fig.data[0].name, "pre-existing (baseline)")   # base layer first (bottom)
+        self.assertEqual(len(fig.data), 2)                              # baseline + 1 order
+        # Y top accommodates baseline(1000) + order(7) at the shared band
+        self.assertGreaterEqual(fig.layout.yaxis.range[1], 1007)
+        # without baseline -> no base layer
+        fig2 = self.po.build_orderbook_figure(rows, [(1, "06:00")])
+        self.assertNotEqual(fig2.data[0].name, "pre-existing (baseline)")
+
+    def test_depth_default_linear(self):
+        # log is OFF by default now: default build is linear even when all-positive
+        fig = self.po.build_depth_figure(self._depth((100, 50)))   # logy default False
+        self.assertNotEqual(fig.layout.yaxis.type, "log")
 
 
 class OutputValidationTests(unittest.TestCase):

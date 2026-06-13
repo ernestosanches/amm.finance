@@ -47,6 +47,40 @@ def format_link_lines(urls, page=None):
     return [f"  {url}" + ("  <-- this one" if page and f == page else "") for f, url in urls]
 
 
+# The handful of figures worth a one-click — surfaced first so they're easy to ctrl+click.
+# (Orderbook is baseline-independent -> one file; depth has the two with/without-initial modes.)
+KEY_FILES = [
+    "orderbook.html",                         # L3 with initial (baseline + orders)
+    "orderbook__without_initial.html",        # L3 without initial (orders only)
+    "depth_over_time.html",                   # L2 with initial (absolute)
+    "depth_over_time__without_initial.html",  # L2 without initial (relative)
+]
+
+
+def key_link_lines(urls):
+    """The KEY_FILES present in `urls`, in KEY_FILES order, as '  N) <url>' lines."""
+    by_name = dict(urls)
+    lines = []
+    for f in KEY_FILES:
+        if f in by_name:
+            lines.append(f"  {len(lines) + 1}) {by_name[f]}")
+    return lines
+
+
+def print_link_block(urls, page=None):
+    """Print the key links once; only non-key pages get an extra 'Other' list (no duplication)."""
+    key = key_link_lines(urls)
+    others = [(f, u) for f, u in urls if f not in set(KEY_FILES)]
+    if key:
+        print("Links (ctrl+click):")
+        print("\n".join(key))
+    if others:
+        print("\nOther pages:")
+        print("\n".join(format_link_lines(others, page)))
+    if not key and not others:
+        print("(no .html files yet — run run_all.py / plot_orderbook.py first)")
+
+
 def make_server(root, port=8000):
     """Build (but don't start) a localhost-only directory server. port=0 picks a free port."""
     handler = lambda *a, **k: http.server.SimpleHTTPRequestHandler(*a, directory=root, **k)
@@ -129,8 +163,8 @@ def serve_with_tunnel(root, port, page=None):
         time.sleep(1)
 
     if base["url"]:
-        print("PUBLIC tunnel URL (anyone with the link can view; ephemeral):")
-        print("\n".join(format_link_lines(list_html_urls(root, base["url"]), page)))
+        print("PUBLIC tunnel URL (anyone with the link can view; ephemeral).\n")
+        print_link_block(list_html_urls(root, base["url"]), page)
         print("\n(give the Cloudflare edge ~10s to warm up — first hit may show error 1033, "
               "then refresh)\n(Ctrl+C — or kill — to stop the tunnel and server cleanly)")
     else:
@@ -151,11 +185,19 @@ def main():
     ap.add_argument("--tunnel", action="store_true",
                     help="ALSO expose via a public cloudflared quick tunnel (opt-in; no account; "
                          "ephemeral random URL; anyone with the link can view)")
+    ap.add_argument("--log", action="store_true",
+                    help="regenerate the figures with log-scaled absolute graphs before serving "
+                         "(off by default; rebuilds from existing CSVs, no network)")
     args = ap.parse_args()
 
     root = resolve_root(args.dir)
     if not os.path.isdir(root):
         raise SystemExit(f"No such directory: {root} (run plot_orderbook.py / plot.py first?)")
+
+    if args.log:  # rebuild the 4 HTML with the absolute depth in log scale, then serve
+        print("Regenerating figures with --log (absolute depth in log scale)...")
+        subprocess.run([sys.executable, "run_all.py", "--figures-only", "--log"],
+                       cwd=HERE, check=True)
 
     if args.tunnel:
         serve_with_tunnel(root, args.port, args.page)
@@ -164,11 +206,7 @@ def main():
     urls = list_html_urls(root, f"http://localhost:{args.port}")
     print(f"Serving {root} on 127.0.0.1:{args.port}  "
           f"(local only — view remotely via an SSH port-forward, or share with --tunnel)\n")
-    if urls:
-        print("Open one of these (Cursor Simple Browser, or your SSH-forwarded localhost):")
-        print("\n".join(format_link_lines(urls, args.page)))
-    else:
-        print("(no .html files yet — generate them with plot_orderbook.py / plot.py)")
+    print_link_block(urls, args.page)
     print("\n(Ctrl+C to stop)")
 
     with make_server(root, args.port) as httpd:

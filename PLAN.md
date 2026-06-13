@@ -199,6 +199,55 @@ Acceptance: 4.1 writes `initial_liquidity.csv` (verified vs `liquidity()`) and `
 `out/orderbook.html` with a working time slider using all prepared data; 4.4 serves the HTML for
 viewing; all stage tests green.
 
+### Stage 4.5 — Redesign the order-book figure + scientific axes
+
+Problem: `out/orderbook.html` showed **no data** — the original per-position **heatmap** loaded on an
+empty first frame (positions mint partway through the day) with an unpinned colour axis, and was hard
+to read regardless. Units were missing ("10e15" with no labels). Redesigned into a clear stacked-bar
+order book with real units.
+
+- [x] **Stacked-bar L3 order book** (`build_orderbook_figure`) — at each **price** the bar height is
+      the total active liquidity, **decomposed into one coloured segment per LP position (order)**:
+      `go.Bar` per position, `barmode="stack"`. So "price 1,883 USDC/WETH = 7 stacked orders" reads
+      directly (verified on real data). Replaces the heatmap.
+- [x] **Real units & axis labels (NeurIPS-style)** — X = **Price (USDC per WETH)** (tick→price via
+      `tick_to_price`, axis labelled with $ prices); Y = **Active liquidity, L (Uniswap v3 units,
+      ∝ √(USDC·WETH))** with `exponentformat="power"`; legend = LP position `[tickLower, tickUpper]`;
+      a caption annotation explains the figure; hover shows order, price, and L.
+- [x] **Open on first non-empty frame** — the view opens on the first populated slice, not the blank
+      slice 0 (positions mint partway through the day).
+- [x] **`serve.py` key links** — numbered **Key links (ctrl+click)** block before the full listing.
+
+#### Follow-up — verified by actually rendering the HTML (closed the blind loop)
+
+Set up `tools.sh` + `render_figs.py` (open-source headless Chromium via Playwright) so the figures can
+be screenshotted to PNG and **looked at**. Rendering exposed real problems the data checks missed; all
+fixed and re-verified against renders:
+- [x] **Flicker killed → fixed global Y.** Per-frame Y autoscale swung the axis ~500× per frame
+      (1e13 ↔ 5e15); a "largest-so-far" running max still stepped up ~5× mid-play. Final: **one fixed
+      Y for all frames** on both depth and order book (a stacked bar can't be log-scaled, so the order
+      book is fixed *linear*). Zero rescales → no flicker.
+- [x] **Order book made legible.** Wide far-from-price positions squished the action into a sliver →
+      **window the X-axis to the active price band** (`active_tick_window`, ±3500 ticks) with
+      window-aware price labels; centred the title so the play button no longer hides it.
+- [x] **Two versions per level (4 files, with-initial = default/canonical, without-initial = suffix):**
+      - **L2 depth:** with-initial = **absolute** (baseline + in-window), without-initial = **relative**
+        (net change, has negatives → linear). Titles carry the basis.
+      - **L3 order book:** with-initial **stacks the absolute baseline UNDER the day's orders**
+        (`orderbook.py` → `orderbook_baseline.csv`; `build_orderbook_figure(baseline_curve=...)` adds a
+        grey base layer). The baseline (~1.5e18) dwarfs the day's orders (~5e15, ~300×), so in the
+        with-initial view the orders are a thin sliver on the standing book — the *without-initial*
+        view is where the per-order detail is readable. (Confirmed by render.)
+- [x] **`--log` (off by default → linear everywhere).** Opt-in log Y for the **absolute depth only**
+      (L3 stacked bars can't be log). On `plot_orderbook.py`, propagated by `run_all.py --log`, and
+      `serve.py --log` (rebuilds figures via `run_all.py --figures-only --log`, no network, then serves).
+- [x] **serve links de-duplicated.** One "Links (ctrl+click)" block of the 4 key files; an "Other
+      pages" list only appears for non-key HTML.
+
+Acceptance: 4 figures (2 per level); with-initial canonical, without-initial suffixed; no flicker
+(fixed Y), windowed to price, units on axes, `--log` off by default; all confirmed by rendered PNGs;
+tests green.
+
 ## Stage 5 — One-command pipeline runner (`run_all.py`)
 
 Goal: a single entry point that runs every stage in dependency order and produces **all** artifacts

@@ -17,9 +17,10 @@ Reference pool: **ETH/USDC 0.3%** `0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8`
 | 4.2 | Use the initial liquidity in Stage 3 plots (absolute depth curve) | ✅ done, tested |
 | 4.3 | Interactive, shareable **order book over time** (time slider, Plotly HTML) | ✅ done, tested |
 | 4.4 | Viewer `serve.py` (local default; opt-in `--tunnel` public share) | ✅ done, tested |
+| 4.5 | Order-book figure: stacked bars (L3) w/ baseline layer, price/L units, fixed-Y (no flicker), `--log` opt-in; 2 versions/level | ✅ done, tested |
 | 5 | One-command pipeline `run_all.py` (all CSVs/PNGs/4 HTML) | ✅ done, tested |
 
-Tests: `python tests.py` → **62 passing** (stdlib `unittest`, `test_stage{1..5}.py` + `test_serve.py`;
+Tests: `python tests.py` → **72 passing** (stdlib `unittest`, `test_stage{1..5}.py` + `test_serve.py`;
 tests are required for every stage/sub-stage). The Graph-subgraph variant and the original handoff
 doc are archived in `old/` (out of scope).
 
@@ -58,7 +59,7 @@ python plot.py
 python orderbook.py --slices 24      # -> orderbook_slices.csv, depth_slices.csv
 python plot_orderbook.py             # -> out/orderbook.html, out/depth_over_time.html
 
-python tests.py     # 62 passing
+python tests.py     # 72 passing
 ```
 
 ## What we get (Jun 12 2026)
@@ -79,7 +80,8 @@ tick_snapshot.py                  # Stage 4.1 — absolute L2 start snapshot (->
 orderbook.py                      # Stage 4.3 — time-sliced order-book data (-> *_slices.csv)
 plot_orderbook.py                 # Stage 4.3 — interactive HTML (-> out/*.html)
 serve.py                          # Stage 4.4 — viewer: local default + opt-in --tunnel (public share)
-run_all.py                        # Stage 5 — one-command pipeline (all CSVs/PNGs/4 HTML)
+run_all.py                        # Stage 5 — one-command pipeline (all CSVs/PNGs/HTML)
+tools.sh + render_figs.py         # verification: render out/*.html -> PNG (headless Chromium)
 tests.py + test_stage{1..5}.py    # stdlib-unittest runner + per-stage tests
 requirements.txt                  # web3, matplotlib, plotly (pinned)
 PLAN.md                           # the working plan
@@ -116,6 +118,37 @@ Other caveats:
   LP — true per-user identity needs decoding the NFT `tokenId` one layer up.
 - The liquidity plot uses **raw `L`**, not token/USD depth (converting needs per-band price width).
 - TVL (`balanceOf` + event replay) and price (`sqrtPriceX96`) are exact and version-correct.
+
+## Visualisation — the interactive figures (Stage 4.3–4.5)
+
+Two figure types, each in **two versions** (with-initial = default/canonical; without-initial =
+`__without_initial` suffix) → **4 HTML files**, all standalone Plotly with a time slider:
+
+| File | Level | Encoding |
+|---|---|---|
+| `out/orderbook.html` | **L3** | stacked bars: each price's bar = the day's individual orders stacked, **on top of a grey "pre-existing (baseline)" base layer** (absolute standing book) |
+| `out/orderbook__without_initial.html` | L3 | same, **orders only** (no baseline) — this is where per-order detail is legible |
+| `out/depth_over_time.html` | **L2** | filled area: **aggregate** total liquidity vs price (absolute = baseline + in-window) |
+| `out/depth_over_time__without_initial.html` | L2 | same, **relative** (net change; has negatives → linear) |
+
+Design facts worth knowing (learned the hard way, verified by rendering to PNG via `tools.sh`):
+- **L2 is an aggregate area; only L3 is stacked** (one segment per order). A **stacked bar cannot be
+  log-scaled** (segments must add arithmetically), so the order book is always **linear**.
+- **Fixed global Y = no flicker.** Per-frame autoscale swung the axis ~500×/frame; even a
+  "largest-so-far" running max stepped up mid-play. One fixed Y for all frames → zero rescales.
+- **X is windowed to the active price** (`active_tick_window`, ±3500 ticks) — wide far-OTM positions
+  otherwise squish the action into a sliver. Axis labels are **USDC per WETH** (tick→price).
+- **Scale reality:** the pre-existing baseline (~1.5×10¹⁸ near price) **dwarfs the whole day's orders
+  (~5×10¹⁵, ~300×)**. So the *with-initial* L3 shows the orders as a thin sliver on the standing book;
+  the *without-initial* L3 is the readable order-detail view.
+- **`--log`** (off by default → linear everywhere) only affects the **L2 absolute depth**
+  (`plot_orderbook.py --log`, `run_all.py --log`, `serve.py --log`). L is Uniswap v3 virtual liquidity
+  (∝ √(USDC·WETH)), **not** a USD amount.
+
+**Verification harness:** `bash tools.sh --install-admin` (root, once) + `bash tools.sh --install`
+(user) set up **open-source headless Chromium via Playwright**; `python3 render_figs.py [file]
+[--frames a,b,c]` screenshots the real rendered HTML to `out/png/` so the figures can be eyeballed
+without a desktop browser.
 
 ## Level-1/2/3 and our status
 

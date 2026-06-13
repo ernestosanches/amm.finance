@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMM v3 — 5-stage order book with fees</title>
+<style>
+  :root{
+    --color-text-primary:#1d1c1a;
+    --color-text-secondary:#65645f;
+    --color-text-info:#185FA5;
+    --color-background-primary:#ffffff;
+    --color-background-secondary:#f3f2ec;
+    --color-background-info:#E6F1FB;
+    --color-border-secondary:rgba(0,0,0,0.20);
+    --border-radius-md:8px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:2rem 1rem; background:#fbfaf7; color:var(--color-text-primary);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.5;
+  }
+  .wrap{max-width:840px; margin:0 auto;}
+  h1{font-size:20px; font-weight:500; margin:0 0 .25rem;}
+  .sub{font-size:13px; color:var(--color-text-secondary); margin:0 0 1.5rem;}
+  button{
+    font:inherit; padding:6px 14px; border:1px solid var(--color-border-secondary);
+    background:#fff; border-radius:var(--border-radius-md); cursor:pointer; color:inherit;
+  }
+  button:disabled{opacity:.4; cursor:default;}
+  input[type=range]{accent-color:var(--color-text-info);}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>AMM v3 — five stages with fees</h1>
+<p class="sub">LP adds liquidity → Taker 1 buys → Maker reposts → Taker 2 sells → Maker reposts. Drag the fee γ: the fee pot grows but every rung's q⁰ stays fixed, because v3 does not reinvest fees into L.</p>
+
+<div style="padding:1rem 0;">
+
+<div style="display:flex; align-items:center; gap:12px; margin:0 0 .9rem;">
+  <label style="font-size:14px; color:var(--color-text-secondary); min-width:64px;">Fee &gamma;</label>
+  <input type="range" id="fee" min="0" max="100" value="30" step="5" style="flex:1;">
+  <span id="feeOut" style="font-size:14px; font-weight:500; min-width:80px; text-align:right;"></span>
+</div>
+
+<div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 .75rem;">
+  <div style="display:flex; gap:6px;" id="dots"></div>
+  <div style="display:flex; gap:8px;">
+    <button id="prev">&larr; Prev</button>
+    <button id="next">Next &rarr;</button>
+  </div>
+</div>
+
+<div id="title" style="font-size:16px; font-weight:500; margin:0 0 2px;"></div>
+<div id="caption" style="font-size:13px; color:var(--color-text-secondary); min-height:34px; margin:0 0 .9rem;"></div>
+
+<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:0 0 1rem;">
+  <div style="background:var(--color-background-secondary); border-radius:var(--border-radius-md); padding:.7rem .9rem;">
+    <div style="font-size:12px; color:var(--color-text-secondary);">active L (drives rung sizes)</div>
+    <div id="mL" style="font-size:20px; font-weight:500;">1000.000</div>
+  </div>
+  <div style="background:var(--color-background-info); border-radius:var(--border-radius-md); padding:.7rem .9rem;">
+    <div style="font-size:12px; color:var(--color-text-info);">fee pot — token1 (parked)</div>
+    <div id="mF1" style="font-size:20px; font-weight:500; color:var(--color-text-info);"></div>
+  </div>
+  <div style="background:var(--color-background-info); border-radius:var(--border-radius-md); padding:.7rem .9rem;">
+    <div style="font-size:12px; color:var(--color-text-info);">fee pot — token0 (parked)</div>
+    <div id="mF0" style="font-size:20px; font-weight:500; color:var(--color-text-info);"></div>
+  </div>
+</div>
+
+<div id="book" style="display:flex; flex-direction:column; gap:3px;"></div>
+
+<div style="display:flex; gap:16px; flex-wrap:wrap; margin-top:1rem; font-size:13px; color:var(--color-text-secondary);">
+  <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#F0997B;"></span> ask</span>
+  <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#5DCAA5;"></span> bid</span>
+  <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#85B7EB;"></span> just reposted (same size)</span>
+  <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;border:1.5px dashed #A32D2D;"></span> gap</span>
+</div>
+<div style="margin-top:.7rem; font-size:13px; color:var(--color-text-secondary);">
+  v3: the fee is skimmed off each taker and parked in the pot — it never re-enters L, so every rung's q⁰ is identical across all five stages (and at every &gamma;). In v2 the fee would re-enter reserves instead, growing L and thickening every rung. That is the difference that matters for a correct book.
+</div>
+</div>
+</div>
+
+<script>
+(function(){
+  var L=1000, edges=[100,102,104,106,108,110,112,114,116,118,120,122], n=edges.length-1;
+  var bands=[];
+  for(var i=0;i<n;i++){var lo=edges[i],hi=edges[i+1];bands.push({lo:lo,hi:hi,q0:L*(1/lo-1/hi),fill:lo*hi});}
+  var maxq=Math.max.apply(null,bands.map(function(b){return b.q0;}));
+  var net1_T1=L*(116-110);
+  var net0_T2=L*(1/112-1/116);
+
+  var states=[
+    {spot:110, title:"Stage 1 — LP adds liquidity",
+     cap:"Full double-sided ladder posted. No trade yet, fee pot empty.",
+     side:["bid","bid","bid","bid","bid","ask","ask","ask","ask","ask","ask"], f1:false, f0:false},
+    {spot:116, title:"Stage 2a — Taker 1 buys (fee skimmed)",
+     cap:"Asks in (110,116) fill. Fee is taken off the token1 input and parked in the pot — it does NOT enter L. Traditional book gaps.",
+     side:["bid","bid","bid","bid","bid","empty","empty","empty","ask","ask","ask"], f1:true, f0:false},
+    {spot:116, title:"Stage 2b — Maker reposts as bids",
+     cap:"Each emptied level returns as a bid of identical q\u2070, funded by the token1 NET (fee excluded). Sizes unchanged; pot holds the fee.",
+     side:["bid","bid","bid","bid","bid","newbid","newbid","newbid","ask","ask","ask"], f1:true, f0:false},
+    {spot:112, title:"Stage 3a — Taker 2 sells (fee skimmed)",
+     cap:"Bids in (112,116) fill. Fee taken off the token0 input, added to the pot. L still unchanged. Book gaps again.",
+     side:["bid","bid","bid","bid","bid","bid","empty","empty","ask","ask","ask"], f1:true, f0:true},
+    {spot:112, title:"Stage 3b — Maker reposts as asks",
+     cap:"Emptied levels return as asks of identical q\u2070. Five stages in, every rung is the same size it started at; only the pot grew.",
+     side:["bid","bid","bid","bid","bid","bid","newask","newask","ask","ask","ask"], f1:true, f0:true}
+  ];
+
+  var STY={
+    ask:{bg:"rgba(240,153,123,0.20)",bar:"#F0997B",txt:"#993C1D",lab:"ask"},
+    bid:{bg:"rgba(93,202,165,0.18)",bar:"#5DCAA5",txt:"#0F6E56",lab:"bid"},
+    newbid:{bg:"rgba(133,183,235,0.22)",bar:"#85B7EB",txt:"#0C447C",lab:"bid (new)"},
+    newask:{bg:"rgba(133,183,235,0.22)",bar:"#85B7EB",txt:"#0C447C",lab:"ask (new)"},
+    empty:{bg:"transparent",bar:"transparent",txt:"#A32D2D",lab:"\u2014 empty \u2014"}
+  };
+
+  var cur=0, book=document.getElementById('book');
+  function fmt(v,d){return v.toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});}
+
+  function render(){
+    var g=parseFloat(document.getElementById('fee').value)/10000;
+    document.getElementById('feeOut').textContent=(g*100).toFixed(2)+'%';
+    var st=states[cur];
+    document.getElementById('title').textContent=st.title;
+    document.getElementById('caption').textContent=st.cap;
+    document.getElementById('mL').textContent='1000.000';
+    var fee1 = st.f1 ? net1_T1*g/(1-g) : 0;
+    var fee0 = st.f0 ? net0_T2*g/(1-g) : 0;
+    document.getElementById('mF1').textContent=fmt(fee1,2);
+    document.getElementById('mF0').textContent=fmt(fee0,5);
+
+    book.innerHTML='';
+    for(var idx=n-1; idx>=0; idx--){
+      var b=bands[idx], s=st.side[idx], sty=STY[s], isEmpty=(s==='empty');
+      var row=document.createElement('div');
+      row.style.cssText='display:grid; grid-template-columns:120px 1fr 84px 92px; align-items:center; gap:10px; padding:5px 10px; border-radius:6px; font-size:12px; background:'+sty.bg+(isEmpty?'; border:1.5px dashed #A32D2D':'; border:1.5px solid transparent');
+      var w=isEmpty?0:Math.round(18+(b.q0/maxq)*200);
+      row.innerHTML=
+        '<span style="font-weight:500;">\u221AP ['+b.lo+', '+b.hi+']</span>'+
+        '<span style="display:flex;align-items:center;gap:8px;"><span style="height:12px;width:'+w+'px;background:'+sty.bar+';border-radius:3px;display:inline-block;"></span>'+(isEmpty?'':'<span style="color:var(--color-text-secondary);">q\u2070='+b.q0.toFixed(3)+'</span>')+'</span>'+
+        '<span style="color:'+sty.txt+'; font-weight:500;">'+sty.lab+'</span>'+
+        '<span style="text-align:right; color:var(--color-text-secondary);">'+(isEmpty?'':'P\u0304='+b.fill.toFixed(0))+'</span>';
+      book.appendChild(row);
+      if(b.lo===st.spot){
+        var d=document.createElement('div');
+        d.style.cssText='display:flex;align-items:center;gap:8px;margin:2px 0;';
+        d.innerHTML='<span style="flex:1;height:0;border-top:1.5px solid var(--color-text-info);"></span><span style="font-size:12px;font-weight:500;color:var(--color-text-info);">spot \u221AP = '+st.spot+'</span><span style="flex:1;height:0;border-top:1.5px solid var(--color-text-info);"></span>';
+        book.appendChild(d);
+      }
+    }
+    var dots=document.getElementById('dots'); dots.innerHTML='';
+    for(var k=0;k<states.length;k++){
+      var dot=document.createElement('span');
+      dot.style.cssText='width:8px;height:8px;border-radius:50%;background:'+(k===cur?'var(--color-text-info)':'var(--color-border-secondary)')+';';
+      dots.appendChild(dot);
+    }
+    document.getElementById('prev').disabled=(cur===0);
+    document.getElementById('next').disabled=(cur===states.length-1);
+  }
+  document.getElementById('next').addEventListener('click',function(){if(cur<states.length-1){cur++;render();}});
+  document.getElementById('prev').addEventListener('click',function(){if(cur>0){cur--;render();}});
+  document.getElementById('fee').addEventListener('input',render);
+  render();
+})();
+</script>
+</body>
+</html>

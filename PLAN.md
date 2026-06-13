@@ -268,6 +268,131 @@ end-to-end); `test_stage5.py` green.
 
 ---
 
+## Stage 6 — A real virtual order book (the `Orderbook` engine)
+
+**Why.** Everything before Stage 6 renders a *liquidity-range* view: a Mint adds a constant `L`
+across its whole `[tickLower, tickUpper]`, and we cumulate `liquidityNet` into a static depth
+curve. That is **not** how the AMM behaves as a book. In reality (see `ORDERS.md`):
+
+- A concentrated-liquidity position is a dense grid of **paired limit orders**. Within a range the
+  per-price order sizes are **uneven** — uniform in √price, not in price — so size grows as price
+  falls (`q0 = L·(1/√P_i − 1/√P_{i+1})` per tick band).
+- Current spot is just a **pointer** into a static book. Levels above spot are live **asks** (sell
+  WETH), levels below are live **bids** (buy WETH). **A swap slides the pointer and each crossed
+  level flips side** — a filled ask instantly becomes a resting bid at the same price and size,
+  funded by the taker's own input. No level is re-priced or re-sized.
+- The pool fee (0.30% here) is **skimmed off the taker's input into a separate per-position
+  counter — never reinvested** — so order sizes stay constant as price moves; only the side flips.
+
+Stage 6 builds an `Orderbook` class that models this correctly and makes it the single source of
+truth for the L2/L3 views, then derives **daily volume, daily fees, and daily APR** as a
+cross-checkable by-product.
+
+### Identity / data realities (decided)
+
+- Pool Mint/Burn events carry `owner = NonfungiblePositionManager` for every NFT-routed LP, so the
+  *pool* keys positions by `(owner, tickLower, tickUpper)` and cannot tell two LPs apart — pool
+  events alone are **not** true L3.
+- **True per-position identity is recovered via `tokenId`** (Stage 6.0): the NFPM emits
+  `IncreaseLiquidity`/`DecreaseLiquidity` with an indexed `tokenId` in the **same transaction** as
+  each pool Mint/Burn. Joining by transaction recovers the tokenId, which **links every Add to its
+  later Removes**. tokenId is the stable position id (better than wallet — the NFT can be transferred).
+- "Individual order" granularity = **per-tokenId position × per-initialized-tick band**. There is no
+  atomic order finer than `(position, tick band)`; that is as deep as on-chain reality goes.
+- The pre-existing baseline (`initial_liquidity.csv`) is an **aggregate** `liquidityNet` profile and
+  **cannot be attributed per-LP**. It is modelled as **one synthetic "pre-existing" position** whose
+  aggregate L-profile is still expanded into per-tick-band virtual orders and flipped by spot — it
+  just isn't colored per-LP. In-window mints get full per-tokenId attribution. This maps onto the
+  existing split: **without-initial = fully-attributed true L3; with-initial = attributed in-window
+  orders over the aggregate backdrop.**
+
+### Stage 6.0 — `tokenId` linkage + pool metadata (data)
+
+New script `link_positions.py` (keyless RPC).
+
+- [ ] **Pool metadata → `pool_metadata.csv`.** Read the pool contract once (keyless): `fee()`
+      (hundredths of a bip → `gamma = fee/1e6`, e.g. `3000`→`0.003`), `tickSpacing()`, `token0()`,
+      `token1()`, and each token's `decimals()`/`symbol()`. Store one row:
+      `pool, token0, token1, symbol0, symbol1, decimals0, decimals1, fee, gamma, tickSpacing`. The
+      engine takes `gamma` from here instead of a hardcoded `0.003`, so it works for any pool/fee tier.
+- [ ] For each mint/burn transaction (39 in the sample day), fetch the **transaction receipt** and
+      find the NFPM `IncreaseLiquidity`/`DecreaseLiquidity` log in it; read its `tokenId`. The log's
+      `liquidity` field must equal the pool event's `amount` (cross-check the join).
+- [ ] Write `tokenId` onto each row → `mints_linked.csv`, `burns_linked.csv` (originals untouched).
+      Fallback: a direct-to-pool mint (owner ≠ NFPM) has no tokenId → identity = `owner` address.
+- [ ] Emit `positions.csv`: one row per tokenId — `tokenId, tickLower, tickUpper, first_mint_ts,
+      net_L_in_window, add_count, remove_count` — the Add↔Remove linkage made explicit.
+- [ ] Tests: receipt-parse join is exercised by the acceptance run; unit-test the pure join logic
+      (match by tx + `amount==liquidity`, fallback-on-no-tokenId) against a hand-built fixture.
+
+### Stage 6.1 — the `Orderbook` engine (`orderbook_engine.py`, pure, no network)
+
+A stateful event-replay book. Holds positions per tokenId, expands each into per-initialized-tick
+virtual orders, walks the day's swaps in order, and accrues fees separately.
+
+- [ ] **Math layer** (pure functions, the contract in `ORDERS.md`): `L` from deposited amounts;
+      position inventory `(x, y)` at a given spot; the per-tick-band ladder
+      (`q0_i`, `q1_i`, geometric-mean fill price `√(P_i·P_{i+1})`); single-tick swap step
+      (price move + amounts) with the fee skimmed off input first.
+- [ ] **`Orderbook` state**: current √price / tick / active `L`; tick-indexed `liquidityNet` map;
+      positions `{tokenId → (L, tickLower, tickUpper)}`; a per-tokenId **fee counter** (`tokensOwed0/1`,
+      never folded back into `L`); global fee growth accumulators.
+- [ ] **`apply_mint` / `apply_burn`**: add/remove a position's `L`, update the tick map. **`apply_swap`**:
+      move spot, cross initialized ticks (active `L += liquidityNet` up / `−=` down), and **flip each
+      crossed level between bid and ask** (same price, same size). Skim the swap's fee
+      (`gross_in × 0.003`) into the in-range positions' counters pro-rata by `L` (per-unit-liquidity
+      growth). We have each swap's tick and active `L` in `swaps.csv`, so attribution is data-driven;
+      exact sub-segmentation of a single swap that crosses several initialized ticks is approximated
+      by its end-state tick (documented; the vast majority of swaps cross none).
+- [ ] **Derived views**: `book_at()` → the side-labeled (bid/ask) per-tick-band ladder at current
+      spot, as an aggregate (L2) and per-tokenId (L3); `daily_stats()` → **volume** (USDC & WETH),
+      **total fees** (both tokens), and **two APRs**: `apr_total_tvl` (24h fees ÷ total pool TVL × 365 —
+      the headline number directly comparable to Uniswap's pool page) and `apr_active_tvl`
+      (÷ value of in-range liquidity only — what active LPs actually earn). Both stored; the total-TVL
+      one is the external cross-check.
+- [ ] **Invariant tests** (`test_stage6.py`): telescoping (band sums equal the closed form);
+      virtual-reserve product holds within a constant-`L` region; **path independence** with zero fee
+      (any spot round-trip returns inventory exactly); geometric-mean fill per band; **constant
+      multiplicative spread** = fee per side, independent of price; a swap never mutates any
+      position's `L`; fee monotonicity + total fee = Σ(`gross_in × 0.003`); token conservation per step.
+- [ ] **APR cross-check**: assert the engine's daily volume/fees/APR are in the right ballpark vs the
+      pool's published figures (sanity bounds, not exact parity) — this is the headline external check.
+
+### Stage 6.2 — wire the engine through the pipeline
+
+Each integration point is its own checkpoint. The new virtual figures are added **alongside** the
+existing range-view figures (both sets served), so the two can be compared.
+
+- [ ] **6.2.0 Metadata threading (pipeline becomes pool-agnostic).** Make `pool_metadata.csv` the
+      single source of truth: `process.py`, `plot.py`, `orderbook.py`, `tick_snapshot.py` read
+      `decimals0/1`, `symbol0/1`, `gamma`, `tickSpacing` from it instead of hardcoding USDC/WETH /
+      `--d0=6/--d1=18` (flags remain as a fallback when the CSV is absent, so each script still runs
+      standalone). `pool_metadata.csv` is produced early — right after Stage 1 download, before
+      Stage 2 — so every downstream stage can consume it. Re-run the **Stage 1–5 tests** after the
+      refactor to confirm no regression.
+- [ ] **6.2.1 `build_book.py`** — replay the linked data through `Orderbook` to emit the
+      book-over-time CSVs: `book_l2.csv` (aggregate bid/ask depth per tick band per slice) and
+      `book_l3.csv` (per-tokenId order per tick band per slice, side-labeled), plus
+      `daily_metrics.csv` (volume, fees, APR). Honours with/without-initial (synthetic baseline
+      position on/off).
+- [ ] **6.2.2 `plot_book.py`** — render the virtual book: x = price (USDC per WETH), bars split into
+      **bid (buy WETH) vs ask (sell WETH)** by spot, L3 stacked per tokenId, L2 aggregated; the
+      existing fixed-Y / no-flicker, axis-label, and `--log` conventions carry over. Outputs
+      `out/orderbook_virtual.html` and `out/orderbook_virtual__without_initial.html` (+ the L2
+      `depth_virtual` pair). A small `daily_metrics` panel/printout shows volume/fees/APR.
+- [ ] **6.2.3 `run_all.py`** — add Stage 6.0 (link) and 6.2 (build + plot) to `plan_steps`; the new
+      HTML join `EXPECTED_HTML`. **6.2.4 `serve.py`** — list the new virtual figures alongside the old.
+- [ ] Tests extended in `test_stage6.py`: linkage join, engine invariants, `build_book` output shape,
+      `plan_steps` includes the new steps, the new HTML are listed.
+
+**Acceptance:** `python link_positions.py` annotates the in-window positions with tokenIds and links
+Adds↔Removes; `python build_book.py` + `plot_book.py` produce the virtual L2/L3 figures whose levels
+visibly **flip bid↔ask as spot moves across the day**, plus a `daily_metrics.csv` with volume, fees,
+and an APR that lands in a sane range vs Uniswap's published number; `test_stage6.py` green and
+`python tests.py` stays green.
+
+---
+
 ## Testing
 
 > **Tests are required for every stage and sub-stage** (1, 2, 3, 4.1, 4.2, 4.3 — and any future
@@ -298,6 +423,11 @@ Dependency-free, using the standard library `unittest`. One runner + one file pe
 - **`test_serve.py`** — Stage 4.4: URL listing + link formatting (pure), a real bind-and-GET
   asserting HTTP 200 / 404 on a loopback-bound port, tunnel-URL parsing, and process-group teardown.
 - **`test_stage5.py`** — Stage 5: `plan_steps()` ordering, both order-book variants, 4 HTML targets.
+- **`test_stage6.py`** — added with Stage 6. Pure tests for the `tokenId` join (match by tx +
+  `amount==liquidity`, no-tokenId fallback); the `Orderbook` engine invariants (telescoping,
+  virtual-reserve product, zero-fee path independence, geometric-mean fill, constant spread,
+  `L` never mutated by a swap, fee monotonicity, conservation); `build_book.py` output shape;
+  daily volume/fees/APR sanity bounds vs the pool's published figures; new HTML in `plan_steps`.
 
 Every stage ships its tests in the same commit as its code, and `python tests.py` must stay green.
 Tests do not hit the network — Stage 1 network behavior is verified by actually running the

@@ -47,13 +47,18 @@ def format_link_lines(urls, page=None):
     return [f"  {url}" + ("  <-- this one" if page and f == page else "") for f, url in urls]
 
 
-# The handful of figures worth a one-click — surfaced first so they're easy to ctrl+click.
-# (Orderbook is baseline-independent -> one file; depth has the two with/without-initial modes.)
+# The figures worth a one-click — surfaced first so they're easy to ctrl+click. The Stage 6.2
+# virtual order book (the real bid/ask book) comes first; the Stage 4.3 range view is kept below it
+# for comparison. Each level (L2 depth, L3 order book) has a with- and without-initial variant.
 KEY_FILES = [
-    "orderbook.html",                         # L3 with initial (baseline + orders)
-    "orderbook__without_initial.html",        # L3 without initial (orders only)
-    "depth_over_time.html",                   # L2 with initial (absolute)
-    "depth_over_time__without_initial.html",  # L2 without initial (relative)
+    "orderbook_virtual.html",                       # L3 virtual book, baseline + per-position orders
+    "orderbook_virtual__without_initial.html",      # L3 virtual book, day's orders only
+    "depth_virtual.html",                           # L2 virtual depth (bid/ask), with initial
+    "depth_virtual__without_initial.html",          # L2 virtual depth (bid/ask), without initial
+    "orderbook.html",                               # L3 range view with initial (baseline + orders)
+    "orderbook__without_initial.html",              # L3 range view without initial (orders only)
+    "depth_over_time.html",                         # L2 range view with initial (absolute)
+    "depth_over_time__without_initial.html",        # L2 range view without initial (relative)
 ]
 
 

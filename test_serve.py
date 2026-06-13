@@ -42,10 +42,18 @@ class ListUrlsTests(unittest.TestCase):
                 ("depth_over_time.html", "http://x/depth_over_time.html"),
                 ("orderbook.html", "http://x/orderbook.html")]
         lines = serve.key_link_lines(urls)
-        # KEY_FILES order: orderbook first, then the depth views; numbered; absent ones skipped
+        # KEY_FILES order: orderbook before the depth view; numbered; absent ones skipped
         self.assertEqual(len(lines), 2)
         self.assertTrue(lines[0].startswith("  1)") and lines[0].endswith("orderbook.html"))
         self.assertTrue(lines[1].startswith("  2)") and lines[1].endswith("depth_over_time.html"))
+
+    def test_virtual_figures_surface_before_range_view(self):
+        urls = [("orderbook.html", "http://x/orderbook.html"),
+                ("orderbook_virtual.html", "http://x/orderbook_virtual.html")]
+        lines = serve.key_link_lines(urls)
+        # the Stage 6.2 virtual book is listed ahead of the Stage 4.3 range view
+        self.assertTrue(lines[0].endswith("orderbook_virtual.html"))
+        self.assertTrue(lines[1].endswith("orderbook.html"))
 
 
 class TunnelHelperTests(unittest.TestCase):

@@ -408,16 +408,22 @@ existing range-view figures (both sets served), so the two can be compared.
       pair). **Verified by headless-Chromium render**: L2 shows bids left / asks right around the spot;
       with-initial L3 is baseline-dominated (orders are slivers), without-initial L3 shows the real
       per-position orders (blue LP 1306924's asks above spot, pink bids below).
-- [ ] **6.2.3 `run_all.py`** — add Stage 6.0 (link) and 6.2 (build + plot) to `plan_steps`; the new
-      HTML join `EXPECTED_HTML`. **6.2.4 `serve.py`** — list the new virtual figures alongside the old.
-- [ ] Tests extended in `test_stage6.py`: linkage join, engine invariants, `build_book` output shape,
-      `plan_steps` includes the new steps, the new HTML are listed.
+- [x] **6.2.3 `run_all.py`** — Stage 6.0 (link) runs right after download (so `pool_metadata.csv`
+      exists for everything downstream); Stage 6.2 (build_book + plot_book) runs twice (without/with
+      initial) like the range view, with-initial last so `daily_metrics.csv` is the full pool.
+      `EXPECTED_HTML` now lists all **8** HTML (4 virtual + 4 range view). `--log` propagates to
+      `plot_book` too; `--figures-only` rebuilds all 8 from existing CSVs. **6.2.4 `serve.py`** —
+      `KEY_FILES` surfaces all 8 (virtual book first, range view below); verified it prints 8 links.
+- [x] Tests extended in `test_stage6.py` (linkage join, engine invariants, build_book shape, plot_book
+      figures) and `test_stage5.py` / `test_serve.py` (plan ordering with the new steps, both
+      build_book variants, 8 HTML declared, virtual links surfaced first). Full suite **132 green**.
 
 **Acceptance:** `python link_positions.py` annotates the in-window positions with tokenIds and links
 Adds↔Removes; `python build_book.py` + `plot_book.py` produce the virtual L2/L3 figures whose levels
 visibly **flip bid↔ask as spot moves across the day**, plus a `daily_metrics.csv` with volume, fees,
-and an APR that lands in a sane range vs Uniswap's published number; `test_stage6.py` green and
-`python tests.py` stays green.
+and an APR that lands in a sane range vs Uniswap's published number; `python run_all.py --figures-only`
+rebuilds all 8 HTML and `serve.py` lists them; `test_stage6.py` green and `python tests.py` stays
+green (132). ✅ Met.
 
 ---
 

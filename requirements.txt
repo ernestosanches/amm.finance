@@ -1,0 +1,9 @@
+# Minimal RPC-only Uniswap v3 pipeline dependencies.
+# Install with: pip install -r requirements.txt
+#
+# web3       -> Stage 1 download (eth_getLogs) + optional Stage 2 TVL baseline (balanceOf)
+# matplotlib -> Stage 3 plotting (Agg backend, no display needed)
+# Stages 1-2 core math is stdlib-only; tests are stdlib unittest (no extra deps).
+# (The archived Graph script in old/ uses `requests` and is out of scope.)
+web3==7.16.0
+matplotlib==3.10.9

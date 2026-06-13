@@ -310,20 +310,26 @@ cross-checkable by-product.
 
 New script `link_positions.py` (keyless RPC).
 
-- [ ] **Pool metadata → `pool_metadata.csv`.** Read the pool contract once (keyless): `fee()`
+- [x] **Pool metadata → `pool_metadata.csv`.** Read the pool contract once (keyless): `fee()`
       (hundredths of a bip → `gamma = fee/1e6`, e.g. `3000`→`0.003`), `tickSpacing()`, `token0()`,
       `token1()`, and each token's `decimals()`/`symbol()`. Store one row:
       `pool, token0, token1, symbol0, symbol1, decimals0, decimals1, fee, gamma, tickSpacing`. The
       engine takes `gamma` from here instead of a hardcoded `0.003`, so it works for any pool/fee tier.
-- [ ] For each mint/burn transaction (39 in the sample day), fetch the **transaction receipt** and
+- [x] For each mint/burn transaction (39 in the sample day), fetch the **transaction receipt** and
       find the NFPM `IncreaseLiquidity`/`DecreaseLiquidity` log in it; read its `tokenId`. The log's
       `liquidity` field must equal the pool event's `amount` (cross-check the join).
-- [ ] Write `tokenId` onto each row → `mints_linked.csv`, `burns_linked.csv` (originals untouched).
+- [x] Write `tokenId` onto each row → `mints_linked.csv`, `burns_linked.csv` (originals untouched).
       Fallback: a direct-to-pool mint (owner ≠ NFPM) has no tokenId → identity = `owner` address.
-- [ ] Emit `positions.csv`: one row per tokenId — `tokenId, tickLower, tickUpper, first_mint_ts,
+- [x] Emit `positions.csv`: one row per tokenId — `tokenId, tickLower, tickUpper, first_mint_ts,
       net_L_in_window, add_count, remove_count` — the Add↔Remove linkage made explicit.
-- [ ] Tests: receipt-parse join is exercised by the acceptance run; unit-test the pure join logic
-      (match by tx + `amount==liquidity`, fallback-on-no-tokenId) against a hand-built fixture.
+- [x] Tests: receipt-parse join is exercised by the acceptance run; unit-test the pure join logic
+      (match by tx + `amount==liquidity`, no-tokenId fallback) against a hand-built fixture.
+
+> **Acceptance run (Jun 12 2026):** `pool_metadata.csv` = USDC/WETH, `fee=3000` → `gamma=0.003`,
+> `tickSpacing=60`, decimals `(6,18)`; **11/11 mints and 16/16 liquidity-removing burns linked to a
+> tokenId** (the other 12 burns are 0-amount fee pokes — no `DecreaseLiquidity`, correctly skipped);
+> `positions.csv` = **23 distinct tokenId positions** (19 still open + 4 opened-and-closed intraday).
+> 63 keyless RPC calls. `test_stage6.py` green (22 tests); full suite 94 green.
 
 ### Stage 6.1 — the `Orderbook` engine (`orderbook_engine.py`, pure, no network)
 

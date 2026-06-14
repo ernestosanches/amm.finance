@@ -486,10 +486,11 @@ Goal: a full game can run headless, deterministically, with no API or UI yet.
 
 Goal: the game is fully playable over the wire (no UI), matching the S0 contract exactly.
 
-- [ ] REST endpoints (§8), all **server-authoritative** — never trust client balances/prices;
-      every mutation runs through B2 (log → conserve → apply). Admin endpoints behind the
-      name + password-hash gate (§9).
-- [ ] WS push for the live streams (§8). Broadcast on each oracle tick and each accepted action.
+- [x] REST endpoints (§8), all **server-authoritative** — never trust client balances/prices;
+      every mutation runs through the Game (validate → log → apply → conserve). Admin endpoints
+      behind the name + password gate (`hmac.compare_digest`, §9).
+- [x] WS push for the live streams (§8). Broadcast on each oracle tick and each accepted action;
+      background ticker drives the seeded oracle and swallows its own errors (never kills the event).
 - Acceptance: a headless script plays a whole game through HTTP/WS only. Tests: per-endpoint
   validation + rejection paths, admin gate, conservation holds after each action endpoint, WS
   broadcasts the expected message on tick/action.

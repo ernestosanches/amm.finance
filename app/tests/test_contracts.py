@@ -15,7 +15,13 @@ from backend.config import GameParams
 
 class HealthTests(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(create_app())
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        self.client = TestClient(create_app(db_path=os.path.join(self.tmp, "h.db"), autotick=False))
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_health(self):
         r = self.client.get("/health")

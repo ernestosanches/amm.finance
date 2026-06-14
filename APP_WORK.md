@@ -116,3 +116,29 @@ string, zero alerts).
 blocked pre-start, phase→SETTLED, buy+conservation, deposit/withdraw/fees/maker-volume, size cap,
 curve deposit, clean-reject-appends-nothing, oracle reproducibility, **full replay determinism**,
 leaderboard house benchmarks. **13 tests; 45 total green.**
+
+---
+
+## Stage B4 — API surface (REST + WebSocket) ✅
+
+**Done.** `backend/api.py` — a `GameServer` holds the Store + Game behind an `asyncio.Lock` (Game is
+sync/not thread-safe) and a set of WS clients. REST (§8): `/register` + `/login` (cookie `aid`,
+server-authoritative), `/action` (buy/sell/deposit/withdraw → `game.act`), `/state`, `/leaderboard`,
+`/pool/{pool}/detail` (price history + D series + live `book()` for the LP-detail view), `/profile/
+{name}` + `/profile/name`, and admin endpoints `/admin/{params,start,monitor}` gated by name+password
+(`hmac.compare_digest`). A background **ticker** advances the seeded oracle every `walk_step`s while
+RUNNING/FREEZE and broadcasts; it swallows its own exceptions so it can never kill the event.
+WebSocket `/ws` sends `hello` (full state) + `leaderboard` on connect, then `d_tick/clock/pool/
+leaderboard` frames on each tick and after every action.
+
+**Worked:** the whole flow (register → admin start → login → buy/deposit → leaderboard → monitor)
+passes, conservation stays clean through the API, and the WS handshake delivers `hello`+`leaderboard`
+under the lifespan-aware `with TestClient(app)` context. Admin password gate rejects wrong creds (403).
+
+**Issues:** `@app.on_event` is deprecated in favour of lifespan handlers in this FastAPI version
+(works fine; left as-is for the demo). Autotick is gated by `AMM_AUTOTICK`/the `autotick` arg so the
+test suite runs deterministically without the background oracle firing.
+
+**Tests:** `test_api.py` — register bag+cookie, duplicate reject, state-from-cookie, trade-blocked-
+pre-start, admin gate, full start+trade+leaderboard+monitor, deposit→pool-detail-book, profile +
+name change, WS hello/leaderboard. **9 tests; 54 total green.**

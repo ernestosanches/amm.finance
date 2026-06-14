@@ -28,6 +28,12 @@ class AppServeTests(unittest.TestCase):
         self.assertIn("admin login:", line)
         self.assertIn("secret-xyz", line)
 
+    def test_is_our_server_matches_only_app(self):
+        self.assertTrue(app_serve.is_our_server("/usr/bin/python3 /home/dev/uni/app/run.py --port 8000"))
+        self.assertTrue(app_serve.is_our_server("uvicorn backend.api:app"))
+        self.assertFalse(app_serve.is_our_server("python3 some_other_server.py --port 8000"))
+        self.assertFalse(app_serve.is_our_server("nginx: worker process"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,7 @@ PUBLIC, no-auth, ephemeral URL anyone with the link can use; it is never on by d
 import argparse
 import atexit
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -42,16 +43,71 @@ def server_cmd(host: str, port: int, reset: bool) -> list:
     return cmd
 
 
-def wait_health(base: str, timeout: float = 25.0) -> bool:
-    t0 = time.time()
-    while time.time() - t0 < timeout:
+# Markers identifying *our* app server in a process command line — so cleanup only ever touches
+# a stale instance of this app, never some unrelated process that happens to hold the port.
+APP_MARKERS = ("app/run.py", "app\\run.py", "backend.api", "backend/api")
+
+
+def is_our_server(cmdline: str) -> bool:
+    return any(m in cmdline for m in APP_MARKERS)
+
+
+def _read_cmdline(pid: int) -> str:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read().replace(b"\x00", b" ").decode("utf-8", "replace").strip()
+    except Exception:
+        return ""
+
+
+def pids_on_port(port: int) -> set:
+    pids = set()
+    try:
+        out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                             capture_output=True, text=True, timeout=5).stdout
+        pids.update(int(x) for x in out.split())
+    except Exception:
+        pass
+    if not pids:  # fall back to ss
         try:
-            with urllib.request.urlopen(base + "/health", timeout=2) as r:
-                if r.status == 200:
-                    return True
+            out = subprocess.run(["ss", "-ltnp"], capture_output=True, text=True, timeout=5).stdout
+            for line in out.splitlines():
+                if re.search(rf":{port}\b", line):
+                    m = re.search(r"pid=(\d+)", line)
+                    if m:
+                        pids.add(int(m.group(1)))
         except Exception:
-            time.sleep(0.3)
-    return False
+            pass
+    return pids
+
+
+def clean_stale_app_servers(port: int) -> list:
+    """Terminate a stale instance of THIS app holding `port`. Refuse (and report) if some other
+    process holds it. Returns the pids cleaned."""
+    killed = []
+    for pid in pids_on_port(port):
+        if pid == os.getpid():
+            continue
+        cmd = _read_cmdline(pid)
+        if is_our_server(cmd):
+            try:
+                os.kill(pid, signal.SIGTERM)
+                killed.append(pid)
+            except Exception:
+                pass
+        else:
+            raise SystemExit(f"port {port} is held by another process (pid {pid}: {cmd[:80]}). "
+                             f"Free it or pick another --port.")
+    if killed:
+        time.sleep(1.5)
+        for pid in killed:
+            if os.path.exists(f"/proc/{pid}"):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
+        print(f"cleaned stale app server(s) on :{port}: {killed}")
+    return killed
 
 
 def creds_line(password: str) -> str:
@@ -88,6 +144,10 @@ def main():
     admin_pw = os.environ.get("AMM_ADMIN_PASSWORD") or config.generate_admin_password()
     child_env = dict(os.environ, AMM_ADMIN_PASSWORD=admin_pw)
 
+    # clean any stale instance of THIS app still bound to the port (the common "address already
+    # in use" cause), so the new server can bind and the tunnel fronts the RIGHT server.
+    clean_stale_app_servers(args.port)
+
     base = f"http://127.0.0.1:{args.port}"
     print(f"\n== launching app server on {args.host}:{args.port} ==")
     server = subprocess.Popen(server_cmd(args.host, args.port, args.reset and not args.seed),
@@ -109,7 +169,22 @@ def main():
     signal.signal(signal.SIGINT, lambda *a: (cleanup(), sys.exit(0)))
     signal.signal(signal.SIGTERM, lambda *a: (cleanup(), sys.exit(0)))
 
-    if not wait_health(base):
+    # wait for OUR server to be healthy; abort if it dies (e.g. failed to bind) rather than
+    # tunneling to whatever else might be answering on the port.
+    healthy, t0 = False, time.time()
+    while time.time() - t0 < 25:
+        if server.poll() is not None:
+            cleanup()
+            raise SystemExit("the app server exited on startup (failed to bind? port in use?) — "
+                             "see its output above")
+        try:
+            with urllib.request.urlopen(base + "/health", timeout=2) as r:
+                if r.status == 200:
+                    healthy = True
+                    break
+        except Exception:
+            time.sleep(0.3)
+    if not healthy:
         cleanup()
         raise SystemExit("server did not become healthy — check its output above")
     print("server healthy.")

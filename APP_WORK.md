@@ -265,3 +265,10 @@ down cleanly on Ctrl+C. Pure helpers covered by `test_app_serve.py` (**60 unit t
 - **Docs:** root `README.md` rewritten as a client-facing showcase (measure → model → prove, with
   screenshots); `DEPLOY.md` added with run instructions for every component + the Cloudflare
   named-tunnel + DNS setup to point `amm.finance` at the instance.
+- **`app_serve.py` self-cleans stale instances.** Symptom: "address already in use" — a previous
+  `run.py` left bound to the port, and `app_serve` then health-checked the *stale* server and
+  tunneled to it while its own server died. Fix: before launching, `clean_stale_app_servers(port)`
+  SIGTERM/SIGKILLs only a stale instance of *this* app on the port (identified by cmdline markers;
+  refuses with a clear message if some other process holds it); and the health wait now aborts if
+  our own server subprocess exits (bind failure) instead of tunneling to a stranger. Verified E2E
+  (stale server detected → cleaned → fresh bind). `test_app_serve.py` covers the matcher.

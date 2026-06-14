@@ -241,3 +241,12 @@ abrupt-drop-loses-nothing — **57 unit total green**; `chaos_check.py` + `rende
 - **Chaos/durability: PASS** (`python app/chaos_check.py`) — kill -9 zero-loss, load, WS storm.
 - All 9 stages (S0, B1–B4, F5–F7, S8) complete and committed. The conservation invariant reads at
   float-epsilon (≈1e-15…1e-12) throughout — the ledger is exact end-to-end.
+
+## Add-on — public sharing via cloudflared (`app_serve.py`)
+
+Added `app/app_serve.py`: runs the live FastAPI server (via `run.py`) and, with `--tunnel`, fronts
+it with a Cloudflare quick tunnel for remote players — reusing `serve.py`'s `find_cloudflared` /
+`find_tunnel_url` / `terminate_process_group` (process-group teardown on every exit path).
+`--seed` seeds a populated game first; default is local-only. Verified end-to-end: captured a
+`https://…trycloudflare.com` URL and fetched `/health` 200 through it; the launcher's own tunnel tore
+down cleanly on Ctrl+C. Pure helpers covered by `test_app_serve.py` (**60 unit total green**).

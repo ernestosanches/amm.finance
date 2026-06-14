@@ -13,7 +13,7 @@ two internal pools — a Uniswap-v3-style range pool and a "draw-your-curve" poo
 ```bash
 pip install -r app/requirements.txt
 
-# quickest: seed a deterministic populated game and launch it live
+# quickest: seed a deterministic populated game and launch it live (local only)
 bash app/run_demo.sh                      # -> http://127.0.0.1:8000
 
 # or a blank game you start yourself from the Admin page
@@ -22,6 +22,22 @@ python app/run.py                          # add --reset for a fresh db, --host 
 
 Admin login (Admin page → Start game, set parameters): `admin` / `letmein-demo-admin`
 (override via `AMM_ADMIN_NAME` / `AMM_ADMIN_PASSWORD`).
+
+### Share with a public URL (cloudflared)
+
+`app_serve.py` runs the live server and, with `--tunnel`, fronts it with a Cloudflare quick tunnel
+so remote players can join over a public URL (no account; ephemeral; torn down cleanly on exit):
+
+```bash
+python app/app_serve.py --tunnel          # prints a https://<random>.trycloudflare.com URL
+python app/app_serve.py --tunnel --seed   # ...with a deterministic populated game already running
+python app/app_serve.py                    # local only (default) — reach via SSH port-forward
+```
+
+Needs `cloudflared` on PATH (or at `/opt/instance-tools/bin/cloudflared`). The tunnel is PUBLIC and
+no-auth — anyone with the link can play; the admin password still gates Start/params/monitor. Give
+the Cloudflare edge ~10 s to warm up (a first hit may show error 1033 — refresh). Ctrl+C stops both
+the tunnel and the server.
 
 ## Replay / retest
 

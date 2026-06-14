@@ -85,3 +85,6 @@ app/data/*.db
 app/data/*.db-*
 app/data/*.jsonl
 app/data/backup/
+
+# committed showcase screenshots (override the global *.png ignore)
+!docs/img/*.png

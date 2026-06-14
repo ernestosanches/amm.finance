@@ -277,9 +277,11 @@ deploy. A second process is a liability here, not robustness.
 - Every state-mutating event — `register`, `buy`, `sell`, `deposit`, `withdraw`, each oracle
   tick, `freeze`, `settle` — is **appended to the log and committed (`fsync`'d) BEFORE the action
   is acknowledged** to the client. Nothing is ack'd that isn't durable.
-- The conservation invariant (§4.5) is asserted **before commit**; on failure the action is
-  rejected and never written, so corrupt state cannot be persisted (float tolerance ~1e-9, with
-  balances held in `Decimal`/integers — engine internals stay float).
+- The conservation invariant (§4.5) is asserted **before commit** with a **generous tolerance**
+  (an absolute ε well above float-rounding noise — minor float drift is expected and explicitly
+  fine). On a *real* breach the **single offending action is rejected and never written**; the
+  running game is **never halted** — the event must not derail mid-play. Balances are held in
+  `Decimal`/integers; engine internals stay float.
 - **On crash/restart: replay the log from row 0** to rebuild exact state — sub-second for a
   ~1-hour game (a few thousand rows). Clients hold no authoritative state (server-authoritative,
   §9), so a refresh or WS reconnect just calls `GET /state` and rehydrates.
@@ -307,11 +309,14 @@ into `actions`. Positions live in the in-memory engine state and are reconstruct
 3. **Off-box copy every 60 s** — `rsync`/file-copy the SQLite file to a second location. Residual
    risk on total host loss is ≤60 s of trades. (~5 lines; the only guard against disk/host death,
    since it's a single box.)
-4. **Replay-on-boot self-test** — on startup, replay then assert conservation; refuse to serve
-   if it fails, rather than serving silently-wrong state.
+4. **Replay-on-boot check** — on startup, replay the log, then assert conservation. On a
+   tolerance mismatch, **warn loudly + flag the admin but still come up** (a stuck-down game is
+   worse than a tiny drift at a live event). Only a corrupt/truncated *log* blocks boot.
 5. **Fast restart + client auto-reconnect** — WS clients reconnect and `GET /state`; a process
    restart is invisible to players beyond a blip.
 
+**Guiding principle: degrade gracefully, never derail.** A minor numeric drift or a single bad
+action must never take the event down — reject the action, alert the admin, keep playing.
 Single-process / single-box is the accepted topology for a 1-hour event; the above bounds every
 failure mode that actually loses the game (process crash fully covered; host loss ≤60 s).
 
@@ -366,6 +371,9 @@ leaderboard deltas, freeze/settle events. Recommended over polling for the live 
 
 ## 11. Build order (milestones)
 
+*Quick dependency order; the dev-facing detail (Goal / tasks / acceptance / tests per stage,
+split backend ⟂ frontend) is in §13.*
+
 1. **Live swap loop (the real engine risk):** extend the existing `OrderBook` from *replay*
    (handed price/tick/L) to a **live cross-tick swap loop** that *computes* output + new price
    from order arrival — ORDERS.md §10 loop + straddle band §11 + multi-LP fee attribution §8.
@@ -399,3 +407,135 @@ leaderboard deltas, freeze/settle events. Recommended over polling for the live 
 - Stronger identity (per-identity verification) if multi-accounting becomes a problem beyond a
   friendly event.
 - Multi-round / regime scenarios (trending / choppy / reversal) for a fuller AMM showcase.
+
+---
+
+## 13. Staged build plan (dev-facing)
+
+Each stage lands independently with its own tests (standing rule — a stage isn't done until
+`tests` are green). Tags: **[B]** backend (Python / FastAPI / SQLite), **[F]** frontend (React),
+**[S]** shared. The dependency spine is **S0 → B1 → B2 → B3 → B4**; the frontend (**F5–F7**) can
+start right after **S0** against the frozen contract + a mock server and join the real backend at
+**B4**. **S8** is the event rehearsal. Detail is deliberately light where the steps are obvious —
+the *non-obvious* decisions are spelled out; routine wiring is left to the developer.
+
+### Stage S0 — Skeleton + frozen contracts [S]
+
+Goal: backend and frontend can be built in parallel, so the **wire contract is pinned first**.
+
+- [ ] Repo layout: `backend/` (FastAPI app, engine package, SQLite) and `frontend/` (React app).
+- [ ] **Freeze the API contract (§8) as the single source of truth** — REST request/response
+      shapes and the WS message envelope (type + payload) for: `D` tick, pool price/TVL, clock,
+      leaderboard delta, freeze/settle. Capture as typed schemas (e.g. Pydantic + generated TS
+      types, or a shared JSON schema) so both sides compile against it.
+- [ ] **Mock server** that serves the contract with canned data, so **[F]** can start immediately.
+- [ ] Pin conventions from §1 once, in code: `P ≡ D`, no decimal scaling, `Decimal` balances.
+- Acceptance: `GET /health` is green; the React dev server renders against the mock; contract
+  types shared. Tests: contract schema validates; a sample message of each WS type round-trips.
+
+### Stage B1 — Engine: the live swap loop [B] *(the real risk — do it first, test it hardest)*
+
+Goal: turn the existing replay `OrderBook` into a **live** engine that *computes* output + new
+price from order arrival (ORDERS.md §10 loop + straddle §11 + multi-LP fee attribution §8).
+
+- [ ] `swap(side, amountIn) -> (amountOut, fee, newPrice)` — **exact-input**, cross-tick loop,
+      fee skimmed off input to `tokensOwed`, `L` never mutated. Halt-on-empty-region (§11).
+- [ ] `addLiquidity(profile, owner) -> positionId` — uniform `L` over a range (v3) **and** an
+      arbitrary non-negative per-tick profile (curve); validate `L_i ≥ 0`; compute the USD0/ETH0
+      the profile needs at the current pool price. `removeLiquidity`, `positionValue(P)`,
+      `priceNow`, level-3 snapshot (`DETAILS.md`).
+- [ ] Balances/inventory in `Decimal`; engine internals float; conservation asserted per op with
+      the generous tolerance (§7).
+- Acceptance: swap/add/remove against a seeded pool conserve each token (within ε); v2 full-range
+  special case sanity-checks. Tests: the ORDERS §7 invariants pointed at the **live** loop
+  (telescoping, geo-mean fill, constant spread, `L`-never-mutated, fee monotonicity, round-trip
+  path-independence at γ=0), plus curve funding + non-negativity rejection.
+
+### Stage B2 — Persistence spine [B] *(build early — everything writes through it)*
+
+Goal: crash-safety per §7, before there's much state to lose.
+
+- [ ] SQLite WAL; the 3 tables (`accounts`, `actions`, `oracle_ticks`).
+- [ ] **Append-and-fsync the action to the log before ack**; apply to in-memory state only after.
+- [ ] **Replay-on-boot** rebuilds exact state; conservation tripwire **rejects a bad action but
+      never halts the game** (§7 guiding principle); off-box file copy hook (used in S8).
+- Acceptance: `kill -9` mid-session → restart → state identical; a forced invariant breach
+  rejects one action and the game keeps serving. Tests: replay determinism, ack-only-after-fsync,
+  reject-not-halt on a synthetic breach.
+
+### Stage B3 — Game core: accounts, pools, oracle, clock, settlement [B]
+
+Goal: a full game can run headless, deterministically, with no API or UI yet.
+
+- [ ] `Account` (atomic debit/credit, never negative), `Pool` (wraps engine + fee auto-collect to
+      owner balances + maker-volume attribution), `Oracle` (seeded lognormal walk, §4.3), `Game`
+      state machine `LOBBY→RUNNING→FREEZE→SETTLED` (§4.2) with clock + autostop + settlement freeze.
+- [ ] Register → balanced bag at `D₀`; seed both pools at `k·X` house-owned; benchmark row (§2);
+      per-trade size cap (default on, §4.4).
+- Acceptance: a scripted game (register N, random actions, advance oracle) runs start→settle and
+  is **bit-reproducible from the seed + action log**. Tests: lifecycle transitions, oracle
+  reproducibility, benchmark formula, auto-collect correctness, size-cap enforcement.
+
+### Stage B4 — API surface: REST + WebSocket [B]
+
+Goal: the game is fully playable over the wire (no UI), matching the S0 contract exactly.
+
+- [ ] REST endpoints (§8), all **server-authoritative** — never trust client balances/prices;
+      every mutation runs through B2 (log → conserve → apply). Admin endpoints behind the
+      name + password-hash gate (§9).
+- [ ] WS push for the live streams (§8). Broadcast on each oracle tick and each accepted action.
+- Acceptance: a headless script plays a whole game through HTTP/WS only. Tests: per-endpoint
+  validation + rejection paths, admin gate, conservation holds after each action endpoint, WS
+  broadcasts the expected message on tick/action.
+
+### Stage F5 — Frontend: core play [F] *(starts after S0 on the mock; wires to B4 when ready)*
+
+Goal: a player can play a complete game in the browser.
+
+- [ ] Landing/auth (register → bag, login by name, cookie hides Register on repeat, §6.1).
+- [ ] Main page (§6.2): portfolio, external-`D` graph, game clock, and the **two LP interfaces**
+      side by side with **Buy / Sell / Deposit / Withdraw**, each disabled unless the player holds
+      enough. Withdraw = pick which deposit (positions individually tracked).
+- [ ] Deposit UIs: v3 = `[tickLower, tickUpper]` picker; curve = **draw a non-negative profile
+      bucketed to `tickSpacing`**, then a single **magnitude knob** → UI shows required USD0/ETH0
+      and disables if short (funding math from the engine, B1).
+- [ ] Live updates over WS; on reconnect, `GET /state` rehydrates (client holds no truth).
+- Acceptance: full game playable in-browser against B4. Tests: action buttons enable/disable on
+  balances, withdraw-by-deposit selection, reconnect rehydrate, curve non-negativity in the UI.
+
+### Stage F6 — Frontend: profile + leaderboard + LP detail [F]
+
+Goal: the read/analytics surface.
+
+- [ ] Profile (§6.3): editable name + history, action history, balance/value curve marked at each
+      timestamp's `D`, the §5 stat fields for self.
+- [ ] Leaderboard (§6.4): all players sorted by total value at current `D`, §5 fields, the two
+      house benchmark rows (non-winning).
+- [ ] LP detail (§6.2): pool price graph + **level-3 order book over time** — reuse the Stage 6
+      `DETAILS.md` visualization.
+- Acceptance: stats match the backend; benchmark rows present; level-3 view renders over time.
+
+### Stage F7 — Admin panel + monitoring [F] (+ small [B] as needed)
+
+Goal: run the event.
+
+- [ ] Params form (§6.5 / §10 defaults), Start control (distributes bags, seeds pools, starts
+      oracle + clock), autostop.
+- [ ] Monitoring: player list + portfolios + positions, live `D`, **conservation-invariant
+      status**, action feed. Behind the password gate (§9).
+- Acceptance: admin can configure, start, and monitor a live game end to end.
+
+### Stage S8 — Event hardening + dry run [S]
+
+Goal: prove it won't lose the game or derail on the day.
+
+- [ ] Off-box SQLite copy every 60 s (§7); deterministic replay/audit from seed + log.
+- [ ] **Load + chaos rehearsal:** simulate the expected player count, then **`kill -9` the process
+      mid-game** → assert zero data loss on restart; reconnect-storm the WS; inject a forced
+      invariant violation → assert the game **keeps running** and the admin is alerted (never
+      derails, §7).
+- Acceptance: a rehearsal game under realistic load survives a mid-game kill with no data loss and
+  no derail; settlement + leaderboard freeze correctly.
+
+> **Note.** No batching, no exact-output, no Postgres, no Go — all out of scope by the locked
+> decisions (§0). Keep stages thin; let the developer fill in obvious wiring.

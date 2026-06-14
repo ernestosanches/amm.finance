@@ -471,11 +471,13 @@ Goal: crash-safety per §7, before there's much state to lose.
 
 Goal: a full game can run headless, deterministically, with no API or UI yet.
 
-- [ ] `Account` (atomic debit/credit, never negative), `Pool` (wraps engine + fee auto-collect to
+- [x] `Account` (atomic debit/credit, never negative), `Pool` (wraps engine + fee auto-collect to
       owner balances + maker-volume attribution), `Oracle` (seeded lognormal walk, §4.3), `Game`
       state machine `LOBBY→RUNNING→FREEZE→SETTLED` (§4.2) with clock + autostop + settlement freeze.
-- [ ] Register → balanced bag at `D₀`; seed both pools at `k·X` house-owned; benchmark row (§2);
-      per-trade size cap (default on, §4.4).
+- [x] Register → balanced bag at `D₀`; seed both pools at `k·X` house-owned (funded with exactly
+      the quoted split so it conserves); benchmark row (§2); per-trade size cap (default on, §4.4).
+      Validate→append→apply so clean rejections leave no log entry; conservation is a never-halt
+      detector (§7).
 - Acceptance: a scripted game (register N, random actions, advance oracle) runs start→settle and
   is **bit-reproducible from the seed + action log**. Tests: lifecycle transitions, oracle
   reproducibility, benchmark formula, auto-collect correctness, size-cap enforcement.

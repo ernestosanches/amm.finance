@@ -84,3 +84,35 @@ fsync-before-ack guarantee; verified the pragmas via `PRAGMA journal_mode/synchr
 
 **Tests:** `test_persistence.py` — append/read order, durable pragmas, restart preserves log, replay
 rebuilds state, meta roundtrip, projections upsert, consistent backup. **7 tests; 32 total green.**
+
+---
+
+## Stage B3 — Game core ✅
+
+**Done.** `backend/game.py` — `Account` (Decimal balances, atomic debit/credit, portfolio mark),
+`Oracle` (seeded lognormal walk, per-step σ/μ), `Pool` (wraps an Engine + fee auto-collect to LP
+owner balances + maker-volume attribution + house-seed benchmark), and the `Game` state machine
+(`LOBBY→RUNNING→FREEZE→SETTLED`, autostop by step count). Single mutator `_apply` shared by the live
+path and replay; `Game.load(store)` rebuilds exact state from the log. House seeds both pools with a
+wide (v2-like) boxcar worth `k·X`, funded with exactly the quoted amounts so seeding conserves.
+
+**Design notes worth recording.** (1) **Validate → append → apply**: clean rejections (wrong phase,
+insufficient funds, size cap, bad ownership/profile) run in a pure `_validate` *before* anything is
+written, so a rejected action leaves no log entry (verified by `test_insufficient_funds_appends_
+nothing`). Deposits validate fully because `quote_*` is pure. (2) **Conservation is a detector, not a
+gate**: after each action the invariant is checked with a generous tolerance; on drift it appends an
+`alert` and records it but **never raises** — degrade gracefully (§7). In practice it never fires
+because credits/debits mirror the engine's exact deltas. (3) **Auto-collect**: fees credit LP owner
+balances immediately in the input token (USD0-equiv added to `fees_usd0`); position fee counters stay
+cumulative for the benchmark/LP-detail views.
+
+**Issues & fixes.** First run: house seed under-funded — I'd funded a balanced 50/50 bag for one
+pool, but two boxcars over a wide range need a non-50/50, per-pool split. Fixed by quoting both pools
+first and funding the house with exactly `Σ need_eth0 / Σ need_usd0`. After that, all green including
+the **replay-reproduces-exact-state** test (balances/fees/volumes/price/step/phase identical to the
+string, zero alerts).
+
+**Tests:** `test_game.py` — balanced bag, duplicate-name reject, start-seeds-and-conserves, trading
+blocked pre-start, phase→SETTLED, buy+conservation, deposit/withdraw/fees/maker-volume, size cap,
+curve deposit, clean-reject-appends-nothing, oracle reproducibility, **full replay determinism**,
+leaderboard house benchmarks. **13 tests; 45 total green.**

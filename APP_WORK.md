@@ -208,3 +208,36 @@ correctly locked (game RUNNING), and **conservation reads Δ 6.0e-17 / 4.5e-12**
 i.e. the ledger is exact end-to-end. No JS errors across all six screens.
 
 **Issues:** none. **Tests:** unit suite **54 green**; F7 verified by `render_check.py` (6 screenshots).
+
+---
+
+## Stage S8 — Event hardening + dry run ✅
+
+**Done.** (1) **Off-box backup** — a background task (`run_backup`, alongside the ticker) copies the
+SQLite db via the online backup API every `AMM_BACKUP_SECS` (default 60) to `data/backup/` (§7
+mechanism 3). (2) **Demo/deploy scripts** — `demo_seed.py` writes a deterministic, populated game to
+the db (N bot players, seeded trades/deposits/withdraws) and exits; `run.py` then loads and continues
+it live. `run_demo.sh` does both in one command and prints the admin creds. `README.md` documents
+run / replay / retest. (3) **Chaos rehearsal** — `chaos_check.py`: plays a game over the API,
+**SIGKILLs the server mid-game**, restarts on the same db, and asserts the recovered leaderboard is
+byte-identical; plus a 200-request load burst and a 40-connection WS reconnect storm.
+
+**Results.** `demo_seed.py` (6 players, 8 rounds, seed 7): conservation Δ ≈ (−2e-15, −3e-12), 0
+alerts, players differentiated ($9,975–$10,009), house benchmarks present. `chaos_check.py`: **load
+burst all-200; SIGKILL → restart → ZERO DATA LOSS (leaderboard identical); WS storm healthy; PASS.**
+The durability unit tests also confirm a forced conservation breach raises an alert + persists it but
+**never halts** the game, and an abrupt handle-drop mid-sequence reloads to identical state.
+
+**Issues:** none. **Tests:** `test_durability.py` (3) — breach-alerts-not-halts, alert-persisted,
+abrupt-drop-loses-nothing — **57 unit total green**; `chaos_check.py` + `render_check.py` both PASS.
+
+---
+
+## Final status
+
+- **Unit suite: 57 green** (`python app/tests.py`) — engine invariants, persistence/replay, game core
+  + determinism, REST/WS API, durability.
+- **Headless UI: PASS** (`python app/render_check.py`) — 6 screens, no JS errors.
+- **Chaos/durability: PASS** (`python app/chaos_check.py`) — kill -9 zero-loss, load, WS storm.
+- All 9 stages (S0, B1–B4, F5–F7, S8) complete and committed. The conservation invariant reads at
+  float-epsilon (≈1e-15…1e-12) throughout — the ledger is exact end-to-end.

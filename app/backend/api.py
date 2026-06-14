@@ -39,6 +39,10 @@ class GameServer:
         self.price_history: dict[str, list[dict]] = {"v3": [], "curve": []}
         self.value_history: dict[int, list[dict]] = {}
         self._ticker_task: asyncio.Task | None = None
+        self._backup_task: asyncio.Task | None = None
+        self.backup_path = os.path.join(os.path.dirname(db_path), "backup",
+                                        os.path.basename(db_path))
+        self.backup_interval = float(os.environ.get("AMM_BACKUP_SECS", "60"))
 
     # --- helpers ---
     def snapshot_prices(self) -> None:
@@ -118,6 +122,15 @@ class GameServer:
             except Exception:
                 pass  # never let the ticker kill the event
 
+    async def run_backup(self) -> None:
+        while True:
+            await asyncio.sleep(self.backup_interval)
+            try:
+                async with self.lock:
+                    self.store.backup_to(self.backup_path)   # §7 off-box copy
+            except Exception:
+                pass
+
 
 def _aid_from_cookie(aid: str | None) -> int | None:
     try:
@@ -145,11 +158,13 @@ def create_app(db_path: str | None = None, params: config.GameParams | None = No
     async def _startup():
         if server.autotick:
             server._ticker_task = asyncio.create_task(server.run_ticker())
+            server._backup_task = asyncio.create_task(server.run_backup())
 
     @app.on_event("shutdown")
     async def _shutdown():
-        if server._ticker_task:
-            server._ticker_task.cancel()
+        for t in (server._ticker_task, server._backup_task):
+            if t:
+                t.cancel()
         server.store.close()
 
     # ---- health / static ----

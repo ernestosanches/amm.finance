@@ -37,12 +37,28 @@ class GameServer:
         self.clients: set[WebSocket] = set()
         self.autotick = autotick
         self.price_history: dict[str, list[dict]] = {"v3": [], "curve": []}
+        self.value_history: dict[int, list[dict]] = {}
         self._ticker_task: asyncio.Task | None = None
 
     # --- helpers ---
     def snapshot_prices(self) -> None:
         for label, pool in self.game.pools.items():
             self.price_history[label].append({"step": self.game.step, "price": pool.price()})
+
+    def snapshot_values(self) -> None:
+        g = self.game
+        for aid, acc in g.accounts.items():
+            if acc.is_house or acc.is_admin:
+                continue
+            pv = 0.0
+            for label, pool in g.pools.items():
+                for p in g.positions_of(aid, label):
+                    pv += pool.position_value_at_d(p.id, g.d)
+            hist = self.value_history.setdefault(aid, [])
+            hist.append({"step": g.step, "value": acc.portfolio_value(g.d, pv),
+                         "usd0": float(acc.balance_usd0), "eth0": float(acc.balance_eth0)})
+            if len(hist) > 3000:
+                hist.pop(0)
 
     def state_dict(self, aid: int | None) -> dict:
         g = self.game
@@ -95,6 +111,7 @@ class GameServer:
                     if self.game.phase in ("RUNNING", "FREEZE"):
                         self.game.tick(ts=time.time())
                         self.snapshot_prices()
+                        self.snapshot_values()
                         if self.game.phase == "SETTLED":
                             self.store.set_meta("settled_at", time.time())
                 await self.broadcast()
@@ -229,7 +246,7 @@ def create_app(db_path: str | None = None, params: config.GameParams | None = No
                 "balance_usd0": float(acc.balance_usd0), "balance_eth0": float(acc.balance_eth0),
                 "fees_usd0": float(acc.fees_usd0), "taker_volume_usd0": float(acc.taker_volume),
                 "maker_volume_usd0": float(acc.maker_volume), "positions": positions,
-                "history": history, "d": server.game.d}
+                "history": history, "value_history": server.value_history.get(acc.id, []), "d": server.game.d}
 
     @app.post("/profile/name")
     async def change_name(req: dict, aid: str | None = Cookie(default=None)):
@@ -265,6 +282,7 @@ def create_app(db_path: str | None = None, params: config.GameParams | None = No
                 r = server.game.start(ts=time.time())
                 server.store.set_meta("started_at", time.time())
                 server.snapshot_prices()
+                server.snapshot_values()
             except GameError as e:
                 return JSONResponse({"detail": str(e)}, status_code=400)
         await server.broadcast()

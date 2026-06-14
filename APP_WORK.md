@@ -171,3 +171,24 @@ the §4.5/Stage-4.5 "actually render it" lesson paying off again.
 
 **Tests:** unit suite unchanged at **54 green** (frontend verified by `render_check.py`, kept out of
 the offline unittest run as it needs a browser — same split as the data pipeline's render step).
+
+---
+
+## Stage F6 — Frontend: profile + leaderboard + LP detail ✅
+
+**Done.** `frontend/pages_read.js`. **Leaderboard** — all §5 fields (total value at D, both balances,
+fees, taker/maker volume), me-row highlighted, the two house benchmark rows styled as non-winning.
+**Profile** — stats, editable name + history, **portfolio-value-over-time sparkline**, open
+positions, and an action-history table. **LP detail** — pool-price-over-time chart + a **live
+level-3 order book** drawn as an inline-SVG stacked-bar chart (one coloured segment per LP order per
+tickSpacing band, grey = house seed, dashed orange spot line splitting bids/asks). Backend: cheap
+per-tick `snapshot_values()` feeds the profile value curve; `/pool/{pool}/detail` already serves the
+live `book()`.
+
+**Verification (render check extended).** Drove deposit → leaderboard → pool-detail → profile,
+screenshotting each, no JS errors. The level-3 render is the money shot: the grey house seed shows
+the smooth `q0 ∝ 1/(√Pₐ·√P_b)` density decaying as price rises, alice's deposited range sits as a
+coloured hump straddling the spot line — the virtual book behaving exactly as ORDERS.md predicts.
+Leaderboard shows house-v3 at $10,004 (it earned alice's fee) vs house-curve $10,000 (untouched).
+
+**Issues:** none. **Tests:** unit suite **54 green**; F6 verified by `render_check.py` (5 screenshots).

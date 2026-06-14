@@ -513,12 +513,12 @@ Goal: a player can play a complete game in the browser.
 
 Goal: the read/analytics surface.
 
-- [ ] Profile (§6.3): editable name + history, action history, balance/value curve marked at each
-      timestamp's `D`, the §5 stat fields for self.
-- [ ] Leaderboard (§6.4): all players sorted by total value at current `D`, §5 fields, the two
+- [x] Profile (§6.3): editable name + history, action history, value-over-time sparkline (per-tick
+      snapshots marked at `D`), the §5 stat fields for self.
+- [x] Leaderboard (§6.4): all players sorted by total value at current `D`, §5 fields, the two
       house benchmark rows (non-winning).
-- [ ] LP detail (§6.2): pool price graph + **level-3 order book over time** — reuse the Stage 6
-      `DETAILS.md` visualization.
+- [x] LP detail (§6.2): pool price graph + **live level-3 order book** (inline-SVG stacked per-
+      position bars, spot line). Live current book rather than a historical slider — see APP_WORK F6.
 - Acceptance: stats match the backend; benchmark rows present; level-3 view renders over time.
 
 ### Stage F7 — Admin panel + monitoring [F] (+ small [B] as needed)

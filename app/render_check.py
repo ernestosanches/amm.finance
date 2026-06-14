@@ -91,6 +91,23 @@ def main():
             det = httpx.get(base + "/pool/v3/detail", timeout=5).json()
             assert det["price"] != config.GameParams().d0, "buy did not move the pool price"
 
+            # deposit liquidity in v3 (range, defaults pre-filled), so the L3 book has a player order
+            page.get_by_text("Deposit liquidity").first.click()
+            page.get_by_role("button", name="Deposit", exact=True).first.click()
+            page.wait_for_timeout(1000)
+
+            # F6 read pages: leaderboard, pool detail (level-3 book), profile
+            for route, marker, shot in [
+                ("#/leaderboard", "Leaderboard", "ui_3_leaderboard.png"),
+                ("#/pool/v3", "Level-3 order book", "ui_4_pool_detail.png"),
+                ("#/profile/alice", "Profile", "ui_5_profile.png"),
+            ]:
+                page.goto(base + route, wait_until="domcontentloaded")
+                page.get_by_text(marker, exact=False).first.wait_for(timeout=8000)
+                p = os.path.join(out, shot)
+                page.screenshot(path=p, full_page=True)
+                shots.append(p)
+
             browser.close()
 
         hard = [e for e in errors if e.startswith("pageerror") or "console.error" in e]

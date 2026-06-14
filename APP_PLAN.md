@@ -439,14 +439,16 @@ Goal: backend and frontend can be built in parallel, so the **wire contract is p
 Goal: turn the existing replay `OrderBook` into a **live** engine that *computes* output + new
 price from order arrival (ORDERS.md §10 loop + straddle §11 + multi-LP fee attribution §8).
 
-- [ ] `swap(side, amountIn) -> (amountOut, fee, newPrice)` — **exact-input**, cross-tick loop,
-      fee skimmed off input to `tokensOwed`, `L` never mutated. Halt-on-empty-region (§11).
-- [ ] `addLiquidity(profile, owner) -> positionId` — uniform `L` over a range (v3) **and** an
-      arbitrary non-negative per-tick profile (curve); validate `L_i ≥ 0`; compute the USD0/ETH0
-      the profile needs at the current pool price. `removeLiquidity`, `positionValue(P)`,
-      `priceNow`, level-3 snapshot (`DETAILS.md`).
-- [ ] Balances/inventory in `Decimal`; engine internals float; conservation asserted per op with
-      the generous tolerance (§7).
+- [x] `swap(zero_for_one, amountIn) -> (amountOut, in_consumed, fee, newPrice, fee_by_position)`
+      — **exact-input**, cross-tick loop, fee skimmed off input (pro-rata to in-range positions),
+      `L` never mutated. Halt-on-empty-region (§11). *(Band-native: liquidity stored per
+      tickSpacing band, so the loop steps band-by-band — see APP_WORK.md B1.)*
+- [x] `add_position` — uniform `L` over a range (v3) **and** an arbitrary non-negative per-tick
+      profile (curve) via `quote_range`/`quote_curve`; validate `L_i ≥ 0`; compute the USD0/ETH0
+      the profile needs at the current price. `remove_position`, `position_value_usd0`, `price`,
+      `book()` level-3 snapshot.
+- [x] Inventory/engine internals float; conservation asserted at the ledger (Game) layer with the
+      generous tolerance (§7) — engine returns exact per-swap deltas for that check.
 - Acceptance: swap/add/remove against a seeded pool conserve each token (within ε); v2 full-range
   special case sanity-checks. Tests: the ORDERS §7 invariants pointed at the **live** loop
   (telescoping, geo-mean fill, constant spread, `L`-never-mutated, fee monotonicity, round-trip

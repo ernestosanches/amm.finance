@@ -144,6 +144,15 @@ def create_app(db_path: str | None = None, params: config.GameParams | None = No
     def index():
         return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
+    @app.get("/config")
+    def cfg():
+        p = server.params
+        return {"tick_spacing": p.tick_spacing, "base_symbol": p.base_symbol,
+                "quote_symbol": p.quote_symbol, "d0": p.d0, "fee": p.fee,
+                "size_cap_frac": p.size_cap_frac, "walk_step": p.walk_step,
+                "game_length": p.game_length, "range_factor": p.range_factor,
+                "phase": server.game.phase}
+
     # ---- auth ----
     @app.post("/register")
     async def register(req: C.RegisterRequest, response: Response):

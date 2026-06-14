@@ -103,7 +103,7 @@ Everything downstream (swaps, fees, level-3 snapshots) is identical across both 
 
 ---
 
-## 4. Backend (Go) — components
+## 4. Backend (Python — see §0 locked decisions) — components
 
 ### 4.1 Classes / modules
 
@@ -499,14 +499,13 @@ Goal: the game is fully playable over the wire (no UI), matching the S0 contract
 
 Goal: a player can play a complete game in the browser.
 
-- [ ] Landing/auth (register → bag, login by name, cookie hides Register on repeat, §6.1).
-- [ ] Main page (§6.2): portfolio, external-`D` graph, game clock, and the **two LP interfaces**
-      side by side with **Buy / Sell / Deposit / Withdraw**, each disabled unless the player holds
-      enough. Withdraw = pick which deposit (positions individually tracked).
-- [ ] Deposit UIs: v3 = `[tickLower, tickUpper]` picker; curve = **draw a non-negative profile
-      bucketed to `tickSpacing`**, then a single **magnitude knob** → UI shows required USD0/ETH0
-      and disables if short (funding math from the engine, B1).
-- [ ] Live updates over WS; on reconnect, `GET /state` rehydrates (client holds no truth).
+- [x] Landing/auth (register → bag, login by name, cookie hides Register on repeat, §6.1).
+- [x] Main page (§6.2): portfolio, external-`D` graph, game clock, and the **two LP interfaces**
+      side by side with **Buy / Sell / Deposit / Withdraw**, disabled off-RUNNING. Withdraw lists
+      individual positions.
+- [x] Deposit UIs: v3 = price-range + budget; curve = **draw a non-negative profile bucketed to
+      `tickSpacing`** + budget → engine funding math gates on balances (B1).
+- [x] Live updates over WS; on reconnect, `GET /state` rehydrates (client holds no truth).
 - Acceptance: full game playable in-browser against B4. Tests: action buttons enable/disable on
   balances, withdraw-by-deposit selection, reconnect rehydrate, curve non-negativity in the UI.
 

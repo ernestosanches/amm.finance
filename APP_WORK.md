@@ -142,3 +142,32 @@ test suite runs deterministically without the background oracle firing.
 **Tests:** `test_api.py` — register bag+cookie, duplicate reject, state-from-cookie, trade-blocked-
 pre-start, admin gate, full start+trade+leaderboard+monitor, deposit→pool-detail-book, profile +
 name change, WS hello/leaderboard. **9 tests; 54 total green.**
+
+---
+
+## Stage F5 — Frontend: core play ✅
+
+**Done.** Vanilla-JS SPA. `frontend/lib.js` — DOM helper `el`, `mount`, `api`, formatters, the
+`App` state store (with listeners), `connectWS` (auto-reconnecting WS client that patches state and
+re-renders), inline-SVG `sparkline`, and tick↔price math mirroring the engine. `frontend/app.js` —
+hash router + topbar (phase pill, live D, clock, nav). `frontend/pages_play.js` — **landing/auth**
+(register/login, cookie hides Register) and the **main play page**: portfolio (USD0/ETH0/in-LP/total
+marked at D), D sparkline, and two pool cards each with **Buy/Sell** (exact-input, disabled off-
+RUNNING), **Deposit** (v3 = price-range + budget; curve = a click/drag **draw-your-curve grid**
+bucketed to tickSpacing), and a **Withdraw** list. Added a `/config` endpoint (tickSpacing, symbols).
+
+**Verification — headless browser (`render_check.py`).** Launches a real server and drives Chromium
+through register → admin-start → buy, screenshots each state, and **fails on any console error /
+page exception** (how a broken ES-module import would surface). Confirmed visually: alice's bag
+debits 500 USD0 on a buy, gets ETH0, the v3 price moves 3000→3138, TVL grows, "buy v3: ok" — all
+correct, no JS errors.
+
+**Issues & fixes (caught only by the render loop, not by serving).** A real bug in `el()`: calling
+`el('div.cols', nodeA, nodeB)` mis-parsed the **first child node as the attrs object**, silently
+dropping the Portfolio panel and emitting a stray "null". Pure data/HTTP checks miss this entirely —
+the headless render exposed it. Fixed with the standard hyperscript heuristic (treat arg 2 as a
+child unless it's a plain attrs object) and hardened `mount()` to filter nullish children. This is
+the §4.5/Stage-4.5 "actually render it" lesson paying off again.
+
+**Tests:** unit suite unchanged at **54 green** (frontend verified by `render_check.py`, kept out of
+the offline unittest run as it needs a browser — same split as the data pipeline's render step).

@@ -1,64 +1,81 @@
-// S0 — frontend skeleton + tiny dependency-free helpers. Expanded into the full SPA in F5–F7.
-// No framework, no build step, no CDN: vanilla ES modules + inline SVG, served statically by the
-// backend, so the demo runs offline with just `python app/run.py`.
+// SPA entry: hash router + topbar + pages. F5 implements landing + main (core play);
+// leaderboard/profile/pool-detail (F6) and admin (F7) are wired in their own modules.
+import { App, api, el, mount, fmt, refreshState, refreshLeaderboard, connectWS } from '/static/lib.js';
+import { renderLanding, renderMain } from '/static/pages_play.js';
+import { renderLeaderboard, renderProfile, renderPoolDetail } from '/static/pages_read.js';
+import { renderAdmin } from '/static/pages_admin.js';
 
-// --- tiny DOM helper: el('div.cls', {attrs}, ...children) ---
-export function el(spec, attrs = {}, ...children) {
-  const [tag, ...classes] = spec.split('.');
-  const node = document.createElement(tag || 'div');
-  if (classes.length) node.className = classes.join(' ');
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (v == null || v === false) continue;
-    if (k === 'class') node.className = v;
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v);
-    else if (k === 'html') node.innerHTML = v;
-    else if (k in node && k !== 'list') node[k] = v;
-    else node.setAttribute(k, v);
+const view = () => document.getElementById('view');
+
+function topbar() {
+  const bar = document.getElementById('topbar');
+  const s = App.state, c = s.clock;
+  const phaseColor = { RUNNING: 'green', FREEZE: 'accent', SETTLED: 'red', LOBBY: 'muted' }[c.phase] || 'muted';
+  mount(bar,
+    el('span.brand', {}, 'AMM Game'),
+    el('span.pill', { class: 'pill ' + phaseColor }, c.phase),
+    el('span.muted', {}, 'D = ', el('b', { class: 'accent' }, fmt.price(s.d)), ` ${App.config.quote_symbol}/${App.config.base_symbol}`),
+    el('span.muted', {}, '⏱ ', fmt.clock(c.remaining), ' left'),
+    el('span.spacer'),
+    navlink('#/', 'Play'),
+    navlink('#/leaderboard', 'Leaderboard'),
+    s.account && navlink('#/profile/' + encodeURIComponent(s.account.name), 'Profile'),
+    navlink('#/admin', 'Admin'),
+    s.account
+      ? el('span.muted', {}, 'as ', el('b', {}, s.account.name))
+      : el('span.muted', {}, 'not logged in'),
+  );
+}
+
+function navlink(href, label) {
+  const on = (location.hash || '#/') === href || (href === '#/' && location.hash === '');
+  return el('a', { href, style: `margin-right:12px;color:${on ? 'var(--blue)' : 'var(--muted)'};text-decoration:none` }, label);
+}
+
+async function route() {
+  const h = location.hash || '#/';
+  const v = view();
+  try {
+    if (h.startsWith('#/leaderboard')) return renderLeaderboard(v);
+    if (h.startsWith('#/profile/')) return renderProfile(v, decodeURIComponent(h.split('/')[2] || ''));
+    if (h.startsWith('#/pool/')) return renderPoolDetail(v, h.split('/')[2]);
+    if (h.startsWith('#/admin')) return renderAdmin(v);
+    // default: landing if not logged in, else main
+    if (!App.state.account) return renderLanding(v);
+    return renderMain(v);
+  } catch (e) {
+    mount(v, el('p.err', {}, 'Error: ' + e.message));
   }
-  for (const c of children.flat()) {
-    if (c == null || c === false) continue;
-    node.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
+}
+
+function rerender() {
+  topbar();
+  // re-render the live pages on state changes (read-only pages refresh themselves)
+  const h = location.hash || '#/';
+  if (h === '#/' || h === '') {
+    if (App.state.account) renderMain(view()); else renderLanding(view());
+  } else if (h.startsWith('#/leaderboard')) {
+    renderLeaderboard(view());
   }
-  return node;
 }
-
-export function mount(target, ...nodes) {
-  target.replaceChildren(...nodes);
-}
-
-export async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  let data = null;
-  try { data = await res.json(); } catch { /* no body */ }
-  if (!res.ok) throw Object.assign(new Error((data && data.detail) || res.statusText), { status: res.status, data });
-  return data;
-}
-
-export const fmt = {
-  usd: (v) => '$' + Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }),
-  usd2: (v) => '$' + Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }),
-  eth: (v) => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 4 }),
-  price: (v) => Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 2 }),
-  pct: (v) => (Number(v || 0) * 100).toFixed(1) + '%',
-  clock: (s) => { s = Math.max(0, Math.floor(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; },
-};
 
 async function boot() {
-  const view = document.getElementById('view');
   const status = document.getElementById('statusbar');
   try {
-    const h = await api('/health');
-    mount(view, el('p.ok', {}, 'Backend healthy. The full app loads here in Stage F5.'));
-    status.textContent = `connected · ${h.service}`;
+    App.config = await api('/config');
+    await refreshState();
+    await refreshLeaderboard();
   } catch (e) {
-    mount(view, el('p.err', {}, 'Backend unreachable: ' + e.message));
+    mount(view(), el('p.err', {}, 'Backend unreachable: ' + e.message));
     status.textContent = 'disconnected';
+    return;
   }
+  status.innerHTML = 'connected · server-authoritative · vanilla JS, no build step';
+  App.on(rerender);
+  window.addEventListener('hashchange', route);
+  connectWS();
+  topbar();
+  route();
 }
 
 boot();

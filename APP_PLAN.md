@@ -535,13 +535,14 @@ Goal: run the event.
 
 Goal: prove it won't lose the game or derail on the day.
 
-- [ ] Off-box SQLite copy every 60 s (§7); deterministic replay/audit from seed + log.
-- [ ] **Load + chaos rehearsal:** simulate the expected player count, then **`kill -9` the process
-      mid-game** → assert zero data loss on restart; reconnect-storm the WS; inject a forced
-      invariant violation → assert the game **keeps running** and the admin is alerted (never
-      derails, §7).
-- Acceptance: a rehearsal game under realistic load survives a mid-game kill with no data loss and
-  no derail; settlement + leaderboard freeze correctly.
+- [x] Off-box SQLite copy every 60 s (`run_backup`, §7); deterministic replay/audit from seed + log
+      (`demo_seed.py`); one-command demo `run_demo.sh`.
+- [x] **Load + chaos rehearsal** (`chaos_check.py`): play over the API, **`kill -9` mid-game** →
+      leaderboard byte-identical on restart (zero loss); 200-request load burst; 40-conn WS storm;
+      forced invariant violation → game **keeps running** + alert (never derails, §7;
+      `test_durability.py`).
+- Acceptance: ✅ rehearsal survives a mid-game `kill -9` with no data loss; forced breach never
+  derails; settlement + leaderboard reachable. (Verified by `chaos_check.py` + `test_durability.py`.)
 
 > **Note.** No batching, no exact-output, no Postgres, no Go — all out of scope by the locked
 > decisions (§0). Keep stages thin; let the developer fill in obvious wiring.

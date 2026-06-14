@@ -62,3 +62,25 @@ it ±spacing on each crossing rather than re-deriving from a float price.
 curve rejected), swap invariants (geo-mean, path-independence, no-L-mutation, conservation, fee=γ,
 spread), cross-tick (active-L change, empty halt), add/remove round-trip, book sides. **15 tests; 25
 total green.**
+
+---
+
+## Stage B2 — Persistence spine ✅
+
+**Done.** `backend/persistence.py` — a `Store` over SQLite in **WAL + `synchronous=FULL`** (fsync on
+every commit). The append-only `actions` table is the source of truth; `append()` durably commits
+before returning the seq, so the API only acks a durable action. `read_log()` + `replay(store,
+apply_fn)` rebuild exact state from the log. Plus the `accounts` and `oracle_ticks` projection
+tables (rebuilt on boot, handy for SQL inspection / the D-graph), a `meta` key/value table (params,
+seed, phase, timestamps), and `backup_to(dest)` using SQLite's online backup API for the §7 off-box
+copy.
+
+**Worked:** restart-survives test (write 50, drop handle, reopen → all 50 in order) and the
+replay-rebuilds-exact-state reducer both pass first try; backup produces a consistent copy.
+
+**Issues:** none. Note `isolation_level=None` (autocommit) + `synchronous=FULL` is what gives the
+fsync-before-ack guarantee; verified the pragmas via `PRAGMA journal_mode/synchronous`. The true
+`kill -9` durability test is exercised for real in S8 (here it's simulated by dropping the handle).
+
+**Tests:** `test_persistence.py` — append/read order, durable pragmas, restart preserves log, replay
+rebuilds state, meta roundtrip, projections upsert, consistent backup. **7 tests; 32 total green.**

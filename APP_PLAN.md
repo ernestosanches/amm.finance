@@ -458,10 +458,11 @@ price from order arrival (ORDERS.md §10 loop + straddle §11 + multi-LP fee att
 
 Goal: crash-safety per §7, before there's much state to lose.
 
-- [ ] SQLite WAL; the 3 tables (`accounts`, `actions`, `oracle_ticks`).
-- [ ] **Append-and-fsync the action to the log before ack**; apply to in-memory state only after.
-- [ ] **Replay-on-boot** rebuilds exact state; conservation tripwire **rejects a bad action but
-      never halts the game** (§7 guiding principle); off-box file copy hook (used in S8).
+- [x] SQLite WAL; the 3 tables (`accounts`, `actions`, `oracle_ticks`) + a small `meta` kv table.
+- [x] **Append-and-fsync the action to the log before ack** (`synchronous=FULL`, autocommit);
+      apply to in-memory state only after. `read_log()` + `replay()` rebuild exact state.
+- [x] **Replay-on-boot** rebuilds exact state (Store side; wired into Game at B3); conservation
+      tripwire **rejects a bad action but never halts** lands at B3; off-box `backup_to()` hook (S8).
 - Acceptance: `kill -9` mid-session → restart → state identical; a forced invariant breach
   rejects one action and the game keeps serving. Tests: replay determinism, ack-only-after-fsync,
   reject-not-halt on a synthetic breach.

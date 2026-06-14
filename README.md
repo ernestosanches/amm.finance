@@ -13,6 +13,10 @@ traders pay more than they should. This project closes that gap in three connect
 Each step is built, tested, and runnable. Run instructions for everything are in
 **[DEPLOY.md](DEPLOY.md)**.
 
+📊 **A slide deck walking the whole story is checked in at [out/PRESENTATION.pdf](out/PRESENTATION.pdf)**
+(source [`PRESENTATION.md`](PRESENTATION.md); rebuild with `python build_presentation.py`, or
+`npx @marp-team/marp-cli PRESENTATION.md --pdf --allow-local-files`).
+
 ---
 
 ## 1. Measure — reconstruct a real Uniswap v3 pool from on-chain data

@@ -30,11 +30,18 @@ Usage:
 
 import argparse
 import csv
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from web3 import Web3
 
 DEFAULT_RPC = "https://ethereum-rpc.publicnode.com"  # keyless; llamarpc / ankr public also work
+DEFAULT_POOL = "0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8"  # ETH/USDC 0.30%
+DEFAULT_DAYS = 5  # default window = the past N days (UTC)
+
+
+def default_range(days: int = DEFAULT_DAYS):
+    end = datetime.now(timezone.utc).date()
+    return (end - timedelta(days=days)).isoformat(), end.isoformat()
 
 # Minimal ABIs ------------------------------------------------------------------
 POOL_EVENT_ABI = [
@@ -119,12 +126,18 @@ def fetch_logs(w3, event, address, topic0, from_block, to_block, chunk):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pool", required=True)
-    ap.add_argument("--start", required=True, help="YYYY-MM-DD UTC inclusive")
-    ap.add_argument("--end", required=True, help="YYYY-MM-DD UTC exclusive")
+    ap.add_argument("--pool", default=DEFAULT_POOL)
+    ap.add_argument("--start", default=None, help="YYYY-MM-DD UTC inclusive (default: 5 days ago)")
+    ap.add_argument("--end", default=None, help="YYYY-MM-DD UTC exclusive (default: today)")
     ap.add_argument("--rpc", default=DEFAULT_RPC)
     ap.add_argument("--chunk", type=int, default=800, help="blocks per getLogs call")
     args = ap.parse_args()
+
+    if args.start is None or args.end is None:
+        ds, de = default_range()
+        args.start = args.start or ds
+        args.end = args.end or de
+        print(f"date range (default = past {DEFAULT_DAYS} days): {args.start} -> {args.end}")
 
     w3 = Web3(Web3.HTTPProvider(args.rpc))
     if not w3.is_connected():

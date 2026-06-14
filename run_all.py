@@ -14,7 +14,7 @@ Each stage is its own script; this just orchestrates them (subprocess) so the ma
 sequence stays the source of truth.
 
 Usage:
-  python run_all.py                                   # defaults: ETH/USDC 0.3%, Jun 12 2026
+  python run_all.py                                   # defaults: ETH/USDC 0.3%, the past 5 days
   python run_all.py --start 2026-06-12 --end 2026-06-13 --slices 24
   python run_all.py --no-baseline-rpc                 # skip absolute-TVL/snapshot network reads
 """
@@ -23,10 +23,19 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
 DEFAULT_POOL = "0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8"
+DEFAULT_DAYS = 5  # default download window = the past N days (UTC)
+
+
+def default_range(days: int = DEFAULT_DAYS) -> tuple[str, str]:
+    """The past `days` days as (start, end) YYYY-MM-DD UTC (end exclusive = today)."""
+    end = datetime.now(timezone.utc).date()
+    start = end - timedelta(days=days)
+    return start.isoformat(), end.isoformat()
 
 # Two versions per level (L2 depth, L3 order book): with-initial = canonical (no copy), without-initial
 # = suffixed copy. The with-initial run is LAST so the canonical out/*.html are the absolute
@@ -95,8 +104,8 @@ def plan_steps(pool, start, end, slices, baseline_rpc=True, log=False, figures_o
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pool", default=DEFAULT_POOL)
-    ap.add_argument("--start", default="2026-06-12", help="YYYY-MM-DD UTC inclusive")
-    ap.add_argument("--end", default="2026-06-13", help="YYYY-MM-DD UTC exclusive")
+    ap.add_argument("--start", default=None, help="YYYY-MM-DD UTC inclusive (default: 5 days ago)")
+    ap.add_argument("--end", default=None, help="YYYY-MM-DD UTC exclusive (default: today)")
     ap.add_argument("--slices", type=int, default=24)
     ap.add_argument("--no-baseline-rpc", dest="baseline_rpc", action="store_false",
                     help="skip absolute-TVL/snapshot on-chain reads")
@@ -105,6 +114,12 @@ def main():
                     help="rebuild only the HTML figures from existing CSVs (no network)")
     ap.set_defaults(baseline_rpc=True)
     args = ap.parse_args()
+
+    if args.start is None or args.end is None:
+        ds, de = default_range()
+        args.start = args.start or ds
+        args.end = args.end or de
+        print(f"date range (default = past {DEFAULT_DAYS} days): {args.start} -> {args.end}")
 
     steps = plan_steps(args.pool, args.start, args.end, args.slices, args.baseline_rpc,
                        log=args.log, figures_only=args.figures_only)

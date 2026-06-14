@@ -250,3 +250,18 @@ it with a Cloudflare quick tunnel for remote players — reusing `serve.py`'s `f
 `--seed` seeds a populated game first; default is local-only. Verified end-to-end: captured a
 `https://…trycloudflare.com` URL and fetched `/health` 200 through it; the launcher's own tunnel tore
 down cleanly on Ctrl+C. Pure helpers covered by `test_app_serve.py` (**60 unit total green**).
+
+## Post-build polish
+
+- **Generated admin password.** No hardcoded default — the server generates a fresh random password
+  per run (unless `AMM_ADMIN_PASSWORD` is set) and prints `[admin] login: admin / <pw>` at startup;
+  `app_serve.py` / `run_demo.sh` generate-and-display it, so a public tunnel never ships a known
+  password. `create_app(admin_password=...)` lets tests pin it.
+- **Frontend input no longer cleared by live ticks.** A WS tick triggered a full re-render that wiped
+  a half-typed name / trade amount. `rerender()` now skips the view rebuild while an input/select in
+  the view is focused (topbar still updates). Verified by typing across repeated live `App.emit()`s.
+- **Pipeline default range = past 5 days.** `run_all.py` and `uniswap_v3_pool_download_rpc.py` now
+  default `--start/--end` to the past 5 days UTC (dynamic) instead of a fixed date.
+- **Docs:** root `README.md` rewritten as a client-facing showcase (measure → model → prove, with
+  screenshots); `DEPLOY.md` added with run instructions for every component + the Cloudflare
+  named-tunnel + DNS setup to point `amm.finance` at the instance.

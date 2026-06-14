@@ -168,6 +168,7 @@ def create_app(db_path: str | None = None, params: config.GameParams | None = No
                 "quote_symbol": p.quote_symbol, "d0": p.d0, "fee": p.fee,
                 "size_cap_frac": p.size_cap_frac, "walk_step": p.walk_step,
                 "game_length": p.game_length, "range_factor": p.range_factor,
+                "sigma": p.sigma, "k": p.k, "x": p.x,
                 "phase": server.game.phase}
 
     # ---- auth ----

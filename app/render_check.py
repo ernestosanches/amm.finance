@@ -108,6 +108,15 @@ def main():
                 page.screenshot(path=p, full_page=True)
                 shots.append(p)
 
+            # F7 admin: log in and view the live monitor
+            page.goto(base + "#/admin", wait_until="domcontentloaded")
+            page.get_by_placeholder("admin password").fill(config.ADMIN_PASSWORD)
+            page.get_by_role("button", name="Enter").click()
+            page.get_by_text("Monitor", exact=True).wait_for(timeout=8000)
+            page.get_by_text("Conservation").wait_for(timeout=4000)
+            shots.append(os.path.join(out, "ui_6_admin.png"))
+            page.screenshot(path=shots[-1], full_page=True)
+
             browser.close()
 
         hard = [e for e in errors if e.startswith("pageerror") or "console.error" in e]

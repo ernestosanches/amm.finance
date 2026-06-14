@@ -192,3 +192,19 @@ coloured hump straddling the spot line — the virtual book behaving exactly as 
 Leaderboard shows house-v3 at $10,004 (it earned alice's fee) vs house-curve $10,000 (untouched).
 
 **Issues:** none. **Tests:** unit suite **54 green**; F6 verified by `render_check.py` (5 screenshots).
+
+---
+
+## Stage F7 — Admin panel + monitoring ✅
+
+**Done.** `frontend/pages_admin.js` — name+password login (creds held only for the admin's browser
+session), a **parameters form** (all §10 fields, editable in LOBBY, auto-locked once RUNNING) wired
+to `/admin/params`, a **Start game** button (`/admin/start`), and a **live monitor** (2s poll):
+phase, D, time left, **conservation status**, recent alerts, and a per-account table (balances +
+position count). Extended `/config` to expose `σ/k/X` so the params form pre-fills.
+
+**Verification (render check extended).** Logged in as admin and viewed the monitor: parameters
+correctly locked (game RUNNING), and **conservation reads Δ 6.0e-17 / 4.5e-12** — float-epsilon,
+i.e. the ledger is exact end-to-end. No JS errors across all six screens.
+
+**Issues:** none. **Tests:** unit suite **54 green**; F7 verified by `render_check.py` (6 screenshots).

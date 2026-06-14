@@ -525,10 +525,10 @@ Goal: the read/analytics surface.
 
 Goal: run the event.
 
-- [ ] Params form (§6.5 / §10 defaults), Start control (distributes bags, seeds pools, starts
+- [x] Params form (§6.5 / §10 defaults, locked once RUNNING), Start control (seeds pools, starts
       oracle + clock), autostop.
-- [ ] Monitoring: player list + portfolios + positions, live `D`, **conservation-invariant
-      status**, action feed. Behind the password gate (§9).
+- [x] Monitoring: player list + portfolios + positions, live `D`, **conservation-invariant status**,
+      alerts. Behind the password gate (§9). 2s poll.
 - Acceptance: admin can configure, start, and monitor a live game end to end.
 
 ### Stage S8 — Event hardening + dry run [S]

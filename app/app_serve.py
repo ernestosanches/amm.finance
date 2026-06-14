@@ -54,8 +54,8 @@ def wait_health(base: str, timeout: float = 25.0) -> bool:
     return False
 
 
-def creds_line() -> str:
-    return f"admin login: {config.ADMIN_NAME} / {config.ADMIN_PASSWORD}"
+def creds_line(password: str) -> str:
+    return f"admin login: {config.ADMIN_NAME} / {password}"
 
 
 def main():
@@ -83,10 +83,15 @@ def main():
             raise SystemExit("cloudflared not found. Install it, or run without --tunnel and use "
                              "an SSH/port-forward instead.")
 
+    # admin password: use AMM_ADMIN_PASSWORD if set, else generate one here and pass it to the
+    # server subprocess so we can display it (no hardcoded default ever ships on a tunnel).
+    admin_pw = os.environ.get("AMM_ADMIN_PASSWORD") or config.generate_admin_password()
+    child_env = dict(os.environ, AMM_ADMIN_PASSWORD=admin_pw)
+
     base = f"http://127.0.0.1:{args.port}"
     print(f"\n== launching app server on {args.host}:{args.port} ==")
     server = subprocess.Popen(server_cmd(args.host, args.port, args.reset and not args.seed),
-                              start_new_session=True)
+                              env=child_env, start_new_session=True)
 
     done = threading.Event()
 
@@ -132,14 +137,14 @@ def main():
 
         if url["v"]:
             print(f"PUBLIC game URL (anyone with the link can play; ephemeral):\n\n    {url['v']}\n")
-            print("   " + creds_line())
+            print("   " + creds_line(admin_pw))
             print("\n(give the Cloudflare edge ~10s to warm up — first hit may show error 1033, "
                   "then refresh)\n(Ctrl+C — or kill — to stop the tunnel and server cleanly)")
         else:
             print("Could not detect a tunnel URL yet; cloudflared is still running — check output.")
     else:
         print(f"\nLocal only — open {base} (view remotely via an SSH port-forward, or share "
-              f"with --tunnel).\n   " + creds_line() + "\n(Ctrl+C to stop)")
+              f"with --tunnel).\n   " + creds_line(admin_pw) + "\n(Ctrl+C to stop)")
 
     try:
         while server.poll() is None:

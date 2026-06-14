@@ -22,7 +22,8 @@ sys.path.insert(0, HERE)
 import httpx  # noqa: E402
 from backend import config  # noqa: E402
 
-ADMIN = {"name": config.ADMIN_NAME, "password": config.ADMIN_PASSWORD}
+ADMIN_PW = "chaos-pw"
+ADMIN = {"name": config.ADMIN_NAME, "password": ADMIN_PW}
 
 
 def free_port():
@@ -30,7 +31,8 @@ def free_port():
 
 
 def launch(db, port):
-    env = dict(os.environ, AMM_DB_PATH=db, AMM_AUTOTICK="0", AMM_BACKUP_SECS="99999")
+    env = dict(os.environ, AMM_DB_PATH=db, AMM_AUTOTICK="0", AMM_BACKUP_SECS="99999",
+               AMM_ADMIN_PASSWORD=ADMIN_PW)
     return subprocess.Popen([sys.executable, os.path.join(HERE, "run.py"), "--port", str(port)],
                             env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

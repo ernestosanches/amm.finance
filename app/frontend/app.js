@@ -49,11 +49,15 @@ async function route() {
 }
 
 function rerender() {
-  topbar();
-  // re-render the live pages on state changes (read-only pages refresh themselves)
+  topbar();  // topbar (D, clock, phase) is safe to refresh — it has no inputs
+  // Don't rebuild the view while the user is typing into it: a live WS tick would otherwise wipe
+  // a half-typed name / trade amount. Skip the view re-render until focus leaves the input.
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT') && view().contains(ae)) return;
   const h = location.hash || '#/';
   if (h === '#/' || h === '') {
-    if (App.state.account) renderMain(view()); else renderLanding(view());
+    if (App.state.account) renderMain(view());
+    // landing has no live data to refresh; leave the register form stable
   } else if (h.startsWith('#/leaderboard')) {
     renderLeaderboard(view());
   }

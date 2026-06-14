@@ -11,14 +11,16 @@ from fastapi.testclient import TestClient
 from backend import config
 from backend.api import create_app
 
-ADMIN = {"name": config.ADMIN_NAME, "password": config.ADMIN_PASSWORD}
+ADMIN_PW = "test-admin-pw"
+ADMIN = {"name": config.ADMIN_NAME, "password": ADMIN_PW}
 
 
 class ApiCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         params = config.GameParams(d0=3000.0, x=10_000.0, k=3.0, walk_step=1.0, game_length=20.0)
-        self.app = create_app(db_path=os.path.join(self.tmp, "api.db"), params=params, autotick=False)
+        self.app = create_app(db_path=os.path.join(self.tmp, "api.db"), params=params,
+                              autotick=False, admin_password=ADMIN_PW)
         self.client = TestClient(self.app)
 
     def tearDown(self):

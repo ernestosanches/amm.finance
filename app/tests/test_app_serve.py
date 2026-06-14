@@ -24,8 +24,9 @@ class AppServeTests(unittest.TestCase):
         self.assertIn("--reset", app_serve.server_cmd("127.0.0.1", 8000, reset=True))
 
     def test_creds_line(self):
-        line = app_serve.creds_line()
+        line = app_serve.creds_line("secret-xyz")
         self.assertIn("admin login:", line)
+        self.assertIn("secret-xyz", line)
 
 
 if __name__ == "__main__":

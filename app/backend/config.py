@@ -7,6 +7,7 @@ ledger layer; the engine works in float internally.
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass, asdict, field
 
 # Conservation invariant tolerance (§7): generous — well above float-rounding noise so minor
@@ -61,9 +62,14 @@ class GameParams:
         return cls(**{k: v for k, v in (d or {}).items() if k in fields})
 
 
-# Admin gate (§9). The one real privilege boundary. Password is provided via env for the demo
-# (a hardcoded long hash in prod); default is printed by the demo launcher so it is reproducible.
+# Admin gate (§9). The one real privilege boundary. The password is taken from AMM_ADMIN_PASSWORD
+# if set, otherwise a fresh random one is GENERATED per server run and printed at startup — no
+# hardcoded default, so a public tunnel never ships a known password.
 ADMIN_NAME = os.environ.get("AMM_ADMIN_NAME", "admin")
-ADMIN_PASSWORD = os.environ.get("AMM_ADMIN_PASSWORD", "letmein-demo-admin")
+ADMIN_PASSWORD = os.environ.get("AMM_ADMIN_PASSWORD")  # None -> server generates one
+
+
+def generate_admin_password() -> str:
+    return secrets.token_urlsafe(9)
 
 DB_PATH = os.environ.get("AMM_DB_PATH", os.path.join(os.path.dirname(__file__), "..", "data", "game.db"))

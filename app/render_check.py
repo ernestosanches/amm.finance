@@ -48,7 +48,9 @@ def main():
     out = os.path.join(HERE, "out")
     os.makedirs(out, exist_ok=True)
 
-    env = dict(os.environ, AMM_DB_PATH=db, AMM_AUTOTICK="0")  # no auto-tick: stable for the check
+    admin_pw = "render-check-pw"
+    env = dict(os.environ, AMM_DB_PATH=db, AMM_AUTOTICK="0",  # no auto-tick: stable for the check
+               AMM_ADMIN_PASSWORD=admin_pw)
     proc = subprocess.Popen([sys.executable, os.path.join(HERE, "run.py"),
                              "--port", str(port), "--reset"], env=env)
     errors, shots = [], []
@@ -75,7 +77,7 @@ def main():
 
             # start the game via admin API, then reload
             r = httpx.post(base + "/admin/start",
-                           json={"name": config.ADMIN_NAME, "password": config.ADMIN_PASSWORD}, timeout=5)
+                           json={"name": config.ADMIN_NAME, "password": admin_pw}, timeout=5)
             assert r.status_code == 200, r.text
             page.reload(wait_until="domcontentloaded")
             page.get_by_text("Total value").wait_for(timeout=8000)
@@ -110,7 +112,7 @@ def main():
 
             # F7 admin: log in and view the live monitor
             page.goto(base + "#/admin", wait_until="domcontentloaded")
-            page.get_by_placeholder("admin password").fill(config.ADMIN_PASSWORD)
+            page.get_by_placeholder("admin password").fill(admin_pw)
             page.get_by_role("button", name="Enter").click()
             page.get_by_text("Monitor", exact=True).wait_for(timeout=8000)
             page.get_by_text("Conservation").wait_for(timeout=4000)

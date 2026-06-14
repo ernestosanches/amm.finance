@@ -24,7 +24,11 @@ FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
 
 class GameServer:
-    def __init__(self, db_path: str, params: config.GameParams | None = None, autotick: bool = True):
+    def __init__(self, db_path: str, params: config.GameParams | None = None, autotick: bool = True,
+                 admin_password: str | None = None):
+        self.admin_name = config.ADMIN_NAME
+        self.admin_password = admin_password or config.ADMIN_PASSWORD or config.generate_admin_password()
+        self.admin_password_generated = not (admin_password or config.ADMIN_PASSWORD)
         self.store = Store(db_path)
         saved = self.store.get_meta("params")
         self.params = params or (config.GameParams.from_dict(saved) if saved else config.GameParams())
@@ -122,6 +126,10 @@ class GameServer:
             except Exception:
                 pass  # never let the ticker kill the event
 
+    def admin_ok(self, name: str, password: str) -> bool:
+        return hmac.compare_digest(name or "", self.admin_name) and \
+            hmac.compare_digest(password or "", self.admin_password)
+
     async def run_backup(self) -> None:
         while True:
             await asyncio.sleep(self.backup_interval)
@@ -139,23 +147,20 @@ def _aid_from_cookie(aid: str | None) -> int | None:
         return None
 
 
-def _admin_ok(name: str, password: str) -> bool:
-    return hmac.compare_digest(name or "", config.ADMIN_NAME) and \
-        hmac.compare_digest(password or "", config.ADMIN_PASSWORD)
-
-
 def create_app(db_path: str | None = None, params: config.GameParams | None = None,
-               autotick: bool | None = None) -> FastAPI:
+               autotick: bool | None = None, admin_password: str | None = None) -> FastAPI:
     db_path = db_path or config.DB_PATH
     if autotick is None:
         autotick = os.environ.get("AMM_AUTOTICK", "1") != "0"
 
     app = FastAPI(title="Multiplayer AMM Game", version="1.0.0")
-    server = GameServer(db_path, params=params, autotick=autotick)
+    server = GameServer(db_path, params=params, autotick=autotick, admin_password=admin_password)
     app.state.server = server
 
     @app.on_event("startup")
     async def _startup():
+        tag = " (generated)" if server.admin_password_generated else ""
+        print(f"[admin] login: {server.admin_name} / {server.admin_password}{tag}", flush=True)
         if server.autotick:
             server._ticker_task = asyncio.create_task(server.run_ticker())
             server._backup_task = asyncio.create_task(server.run_backup())
@@ -278,7 +283,7 @@ def create_app(db_path: str | None = None, params: config.GameParams | None = No
     # ---- admin (name + password gate) ----
     @app.post("/admin/params")
     async def admin_params(req: C.AdminParamsRequest):
-        if not _admin_ok(req.name, req.password):
+        if not server.admin_ok(req.name, req.password):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
         if server.game.phase != "LOBBY":
             return JSONResponse({"detail": "params locked after start"}, status_code=400)
@@ -291,7 +296,7 @@ def create_app(db_path: str | None = None, params: config.GameParams | None = No
 
     @app.post("/admin/start")
     async def admin_start(req: C.AdminAuth):
-        if not _admin_ok(req.name, req.password):
+        if not server.admin_ok(req.name, req.password):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
         async with server.lock:
             try:
@@ -306,7 +311,7 @@ def create_app(db_path: str | None = None, params: config.GameParams | None = No
 
     @app.post("/admin/monitor")
     def admin_monitor(req: C.AdminAuth):
-        if not _admin_ok(req.name, req.password):
+        if not server.admin_ok(req.name, req.password):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
         g = server.game
         de, du = g.conservation_drift()

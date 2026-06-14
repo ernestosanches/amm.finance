@@ -33,6 +33,23 @@ that engine; wherever engine behaviour is referenced below it is defined in thos
 - **Settlement freeze.** Trading halts one `walk_step` before game end; the final `D` used for
   scoring is a step nobody could trade on.
 
+### Locked build decisions
+
+- **Backend: Python (FastAPI + websockets)**, reusing the existing `OrderBook` engine and its
+  test suite verbatim — *not* Go. At ≤~100 players on 5 s ticks, perf is a non-issue, so a
+  second-language reimplementation of the error-prone tick/fee math buys nothing.
+- **Persistence: SQLite in WAL mode, single process, action-log-as-source-of-truth** (§7). The
+  determinism already required (§4.6) *is* the crash-recovery mechanism: the durable action log
+  is authoritative, in-memory state is a replayable cache.
+- **Execution: real-time submission-order only.** Batch / uniform-clearing mode is dropped (not
+  a toggle, not deferred).
+- **Buy / Sell are exact-input** ("spend N USD0" / "sell N ETH0"), the intuitive button; exact-
+  output is not exposed.
+- **Per-trade size cap default ON** (modest, e.g. 10 % of pool reserves) — the one cheap guard
+  that blunts manual sandwiching without changing the model (§4.4). Admin-tunable, can disable.
+- **Balances in `Decimal`/integers; engine internals in float.** A ledger must conserve exactly;
+  the conservation invariant (§4.5) is asserted with a tiny float tolerance (§7).
+
 ---
 
 ## 1. Tokens & price convention (pin this exactly)
@@ -45,6 +62,9 @@ that engine; wherever engine behaviour is referenced below it is defined in thos
 - **Portfolio value (USD0):** `V = balance_USD0 + balance_ETH0 · D`.
 - Each **pool has its own internal price** `P_pool` (from its reserves), which may differ from
   `D`. The UI shows both.
+- **No decimal scaling.** Tokens are virtual, so use `P ≡ D` directly — drop the historical
+  pipeline's `10^(d1−d0)` gymnastics. Pin a **finite tick range** for the bitmap (e.g. `D ∈
+  [0.1·D₀, 10·D₀]`) so liquidity ops and the curve-draw UI have bounded support.
 
 ---
 
@@ -147,16 +167,18 @@ transaction. There is no per-tick batching; `D` updates independently every `wal
 **Accepted residual risks of real-time submission-order execution:**
 - *Manual sandwiching* is theoretically possible (one trade pushes the price, a victim trades at
   the worsened price, a second trade reverts) but is hard to land at human click-speed and is
-  itself exposed to `D` risk. Optional guard: a per-trade max size as a % of pool reserves
-  (admin param, default off).
+  itself exposed to `D` risk. Guard: a per-trade max size as a % of pool reserves (admin param,
+  **default ON** at ~10 %; can be disabled).
 - *First-mover edge* on closing an obvious pool-vs-`D` gap exists but is not risk-free (profit
   depends on the final `D`). Acceptable.
-- *Multi-accounting:* the register cookie is bypassable (incognito / cleared cookies). Because
-  scoring rewards only final holdings — never the number of accounts, volume, or depth — an
-  extra account can only help a main account by transferring value to it through a real trade,
-  i.e. by actually winning an exchange against someone. The conservation invariant (§4.5) bounds
-  the damage. Backstop: every action is logged; flag account pairs that repeatedly trade with
-  each other.
+- *Multi-accounting:* the register cookie is bypassable (incognito / cleared cookies). **The
+  real lever is the free starting bag**, not the trade mechanism: each registration *mints*
+  value `X` from outside the ledger, so `N` alts = `N·X` of capital that can be funnelled into a
+  main account via deliberately bad trades **in a thin pool the player controls**, where the only
+  leakage (slippage + fees) can be made small. The conservation invariant (§4.5) stops *minting*
+  inside the ledger but not the per-registration injection. For a friendly event this is
+  accepted; backstop: every action is logged — flag account pairs that repeatedly trade with each
+  other, and judge the winner as a person. Stronger identity (§12) only if it becomes a problem.
 
 ### 4.5 Conservation invariant (master anti-cheat)
 
@@ -240,31 +262,58 @@ anywhere — absolute figures only.
 
 ---
 
-## 7. Data model (PostgreSQL)
+## 7. Persistence & durability (SQLite, log-as-source-of-truth)
 
-Relational chosen for transactional integrity of the ledger (atomic action application,
-conservation auditing). Core tables:
+The requirement is **do not crash mid-game and lose state** — with minimal build effort. The
+determinism already required (§4.6) *is* the crash-recovery mechanism, so durability is cheap if
+the action log is made authoritative rather than a side audit.
 
-- **games** — `id, status, params (jsonb: token names, D0, σ, walk_step, fees, k, X,
-  gameLength, size_cap), oracle_seed, started_at, ends_at, settled_at`.
-- **accounts** — `id, game_id, name, is_house, is_admin, balance_usd0, balance_eth0,
-  fees_collected, taker_volume, maker_volume, register_cookie_id, created_at`.
-- **name_history** — `id, account_id, old_name, new_name, changed_at`.
-- **positions** — `id, game_id, account_id, pool ('v3'|'curve'), kind ('range'|'curve'),
-  params (jsonb: range or per-tick profile), liquidity_snapshot, status ('open'|'withdrawn'),
-  created_at, withdrawn_at`.
-- **actions** — append-only audit log: `id, game_id, account_id, type ('buy'|'sell'|'deposit'
-  |'withdraw'), payload (jsonb), result (jsonb: amounts, fee, price_before/after), created_at`.
-- **trades** — `id, game_id, pool, taker_account_id, side, amount_in, amount_out, fee,
-  price_after, created_at` (for volume/fee analytics).
-- **fees_ledger** — `id, game_id, pool, position_id, account_id, token, amount, trade_id,
-  created_at` (auto-collect events; supports conservation audit).
-- **d_ticks** — `id, game_id, step, d_value, created_at` (the external-price series).
-- **pool_snapshots** — `id, game_id, pool, step, price, reserves, level3 (jsonb), created_at`
-  (level-3 data over time, format per `DETAILS.md`).
+**Engine:** **SQLite in WAL mode**, single file, single process. Chosen *over* Postgres precisely
+because there is no second server to independently crash; it is ACID, embedded, and trivial to
+deploy. A second process is a liability here, not robustness.
 
-A lightweight in-memory mirror of live game state is fine for speed, with Postgres as the
-durable source of truth and audit/replay store.
+**Model: the durable action log is the source of truth; in-memory state is a replayable cache.**
+
+- Every state-mutating event — `register`, `buy`, `sell`, `deposit`, `withdraw`, each oracle
+  tick, `freeze`, `settle` — is **appended to the log and committed (`fsync`'d) BEFORE the action
+  is acknowledged** to the client. Nothing is ack'd that isn't durable.
+- The conservation invariant (§4.5) is asserted **before commit**; on failure the action is
+  rejected and never written, so corrupt state cannot be persisted (float tolerance ~1e-9, with
+  balances held in `Decimal`/integers — engine internals stay float).
+- **On crash/restart: replay the log from row 0** to rebuild exact state — sub-second for a
+  ~1-hour game (a few thousand rows). Clients hold no authoritative state (server-authoritative,
+  §9), so a refresh or WS reconnect just calls `GET /state` and rehydrates.
+
+**Collapsed schema — 3 core tables (not 8).** Everything else is *derivable on read* from the
+log; materialize a derived table only if a query is ever too slow (it won't be at this scale):
+
+- **accounts** — `id, name, is_house, is_admin, balance_usd0, balance_eth0, fees_collected,
+  taker_volume, maker_volume, register_cookie_id, created_at`. (A convenience projection of the
+  log; the log is still authoritative.)
+- **actions** — append-only log, the source of truth: `id, seq, account_id, type
+  ('register'|'buy'|'sell'|'deposit'|'withdraw'|'oracle'|'freeze'|'settle'), payload (json),
+  result (json: amounts, fee, price_before/after, positionId), created_at`.
+- **oracle_ticks** — `seq, step, d_value, created_at` (the external-price series; part of state,
+  so logged like any action).
+
+*Derived on read (no table needed unless slow):* trades & volume/fee analytics, per-position
+fee ledger, leaderboard, level-3 pool snapshots (`DETAILS.md`), name history → fold name changes
+into `actions`. Positions live in the in-memory engine state and are reconstructed by replay.
+
+**Suggested safety mechanisms (all cheap):**
+
+1. **WAL + fsync-before-ack** — the core guarantee above. Acknowledged ⇒ durable.
+2. **Conservation check before every commit** (§4.5) — corrupt state never reaches disk.
+3. **Off-box copy every 60 s** — `rsync`/file-copy the SQLite file to a second location. Residual
+   risk on total host loss is ≤60 s of trades. (~5 lines; the only guard against disk/host death,
+   since it's a single box.)
+4. **Replay-on-boot self-test** — on startup, replay then assert conservation; refuse to serve
+   if it fails, rather than serving silently-wrong state.
+5. **Fast restart + client auto-reconnect** — WS clients reconnect and `GET /state`; a process
+   restart is invisible to players beyond a blip.
+
+Single-process / single-box is the accepted topology for a 1-hour event; the above bounds every
+failure mode that actually loses the game (process crash fully covered; host loss ≤60 s).
 
 ---
 
@@ -311,35 +360,40 @@ leaderboard deltas, freeze/settle events. Recommended over polling for the live 
 | `X` | admin-set (e.g. 10,000 USD0) | player bag total value |
 | `gameLength` | 60 min | autostop |
 | settlement freeze | 1 `walk_step` | final `D` untradeable |
-| per-trade size cap | off | optional anti-sandwich |
+| per-trade size cap | **on, ~10%** | anti-sandwich; can disable |
 
 ---
 
 ## 11. Build order (milestones)
 
-1. **Engine wiring:** integrate `OrderBook` (per `ORDERS.md`); one pool; swap + add/remove +
-   auto-collect fees; conservation invariant + assertions (§4.5).
-2. **Accounts + ledger:** registration, bags, balances, atomic actions, Postgres schema.
-3. **Oracle + clock:** seeded `D` walk, `walk_step` ticker, game state machine, autostop +
+1. **Live swap loop (the real engine risk):** extend the existing `OrderBook` from *replay*
+   (handed price/tick/L) to a **live cross-tick swap loop** that *computes* output + new price
+   from order arrival — ORDERS.md §10 loop + straddle band §11 + multi-LP fee attribution §8.
+   Exact-input only. This is new code the backtester never had and where correctness bugs hide;
+   point the §7-invariant tests at it. Balances in `Decimal`, engine internals float.
+2. **Engine wiring:** one pool; swap + add/remove + auto-collect fees; conservation invariant +
+   assertions (§4.5).
+3. **Persistence spine (build early, not last):** SQLite WAL, action-log-as-source-of-truth,
+   fsync-before-ack, replay-on-boot self-test (§7). Everything downstream writes through it.
+4. **Accounts + ledger:** registration, bags, balances, atomic actions over the log spine.
+5. **Oracle + clock:** seeded `D` walk, `walk_step` ticker, game state machine, autostop +
    freeze + settlement.
-4. **Two pools:** add the curve-pool front-end (arbitrary non-negative profile + non-negativity
-   validation); seed both at `k·X` house-owned; benchmark computation.
-5. **WebSocket layer + React:** landing/auth, main page (portfolio, D graph, two LP interfaces,
+6. **Two pools:** add the curve-pool front-end (arbitrary non-negative profile + non-negativity
+   validation, bucketed to `tickSpacing`; shape → magnitude knob → engine funds at pool price);
+   seed both at `k·X` house-owned; benchmark computation.
+7. **WebSocket layer + React:** landing/auth, main page (portfolio, D graph, two LP interfaces,
    4 buttons, clock), withdraw-by-deposit selection.
-6. **Profile + Leaderboard:** stat fields (§5), name history, balance/value curves, benchmark
+8. **Profile + Leaderboard:** stat fields (§5), name history, balance/value curves, benchmark
    rows.
-7. **Admin panel:** params, start, monitoring, password gate.
-8. **LP detail view:** pool price graph + level-3 over time (`DETAILS.md`).
-9. **Replay/audit + polish:** deterministic replay from seed + action log; conservation
-   monitor in admin.
+9. **Admin panel:** params, start, monitoring, password gate.
+10. **LP detail view:** pool price graph + level-3 over time (`DETAILS.md`).
+11. **Replay/audit + polish:** deterministic replay from seed + action log; conservation
+    monitor in admin.
 
 ---
 
 ## 12. Open / future (not in demo scope)
 
-- Optional batching / uniform-clearing mode (all actions in a `walk_step` clear together at one
-  price) — would remove the first-mover edge and make sandwiching impossible, if the real-time
-  version feels too reflex-driven at the event.
 - Mean-reverting `D` (exponential Ornstein–Uhlenbeck) option for a calmer, more range-bound
   scenario that is friendlier to liquidity providers.
 - Stronger identity (per-identity verification) if multi-accounting becomes a problem beyond a

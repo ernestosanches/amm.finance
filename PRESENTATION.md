@@ -104,13 +104,13 @@ $2.73M volume · $8.2k fees · <b>14.3% APR</b>
 
 ---
 
-<!-- _footer: "Part 2 — a better AMM you can try, live" -->
+<!-- _footer: "Part 2 — our AMM, live" -->
 
 ![full](app/out/ui_1_lobby.png)
 
-## A demo app with two AMM models — try both, right now
+## Trade now on our AMM!
 
-<span class="small">Everyone in the room gets a balance and can participate. Same tokens, same engine — two different AMM designs to experiment with.</span>
+### Compete with your peers here right now → 🔗 **[amm.finance](https://amm.finance)**
 
 ---
 

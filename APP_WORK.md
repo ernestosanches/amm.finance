@@ -265,6 +265,18 @@ down cleanly on Ctrl+C. Pure helpers covered by `test_app_serve.py` (**60 unit t
 - **Docs:** root `README.md` rewritten as a client-facing showcase (measure → model → prove, with
   screenshots); `DEPLOY.md` added with run instructions for every component + the Cloudflare
   named-tunnel + DNS setup to point `amm.finance` at the instance.
+- **Main page patches live values instead of rebuilding every tick.** The 5 s oracle tick was
+  re-rendering the whole view, so an open deposit form / a curve you were drawing / a half-typed
+  amount got wiped — "I cannot draw … page reloads". Fix: `renderMain` builds the structure once
+  (with stable ids); `updateLiveMain()` patches only the dynamic numbers (price, TVL, fees,
+  portfolio, D chart, positions) in place on each tick; a full rebuild happens only on first render
+  or a phase change. Verified: the curve grid stays the *same DOM node*, `<details>` stays open, and
+  a typed trade amount survives 6 ticks, while the numbers still update.
+- **Landing message when already registered.** A returning visitor (the `registered` cookie set)
+  now sees a clear notice — *"You're already registered in this browser. Use Log in…"* — with login
+  emphasized and Register tucked into an "register another player anyway" expander, instead of the
+  button silently vanishing. Register/login errors are friendlier too (name-taken → "use Log in";
+  unknown name → "register first").
 - **`app_serve.py` self-cleans stale instances.** Symptom: "address already in use" — a previous
   `run.py` left bound to the port, and `app_serve` then health-checked the *stale* server and
   tunneled to it while its own server died. Fix: before launching, `clean_stale_app_servers(port)`

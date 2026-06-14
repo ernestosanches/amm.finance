@@ -1,7 +1,7 @@
 // SPA entry: hash router + topbar + pages. F5 implements landing + main (core play);
 // leaderboard/profile/pool-detail (F6) and admin (F7) are wired in their own modules.
 import { App, api, el, mount, fmt, refreshState, refreshLeaderboard, connectWS } from '/static/lib.js';
-import { renderLanding, renderMain } from '/static/pages_play.js';
+import { renderLanding, renderMain, updateLiveMain } from '/static/pages_play.js';
 import { renderLeaderboard, renderProfile, renderPoolDetail } from '/static/pages_read.js';
 import { renderAdmin } from '/static/pages_admin.js';
 
@@ -50,16 +50,21 @@ async function route() {
 
 function rerender() {
   topbar();  // topbar (D, clock, phase) is safe to refresh — it has no inputs
-  // Don't rebuild the view while the user is typing into it: a live WS tick would otherwise wipe
-  // a half-typed name / trade amount. Skip the view re-render until focus leaves the input.
-  const ae = document.activeElement;
-  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT') && view().contains(ae)) return;
+  const v = view();
   const h = location.hash || '#/';
   if (h === '#/' || h === '') {
-    if (App.state.account) renderMain(view());
-    // landing has no live data to refresh; leave the register form stable
+    if (!App.state.account) return;  // landing is static; never rebuild it under the user
+    // If the main page is already built and the phase hasn't changed, PATCH live values in place
+    // (no teardown) — so an open deposit form / a curve you're drawing survives every tick.
+    const built = v.dataset.page === 'main' && document.getElementById('pf-total');
+    if (built && v.dataset.phase === App.state.clock.phase) { updateLiveMain(); return; }
+    // First build, or a phase change (RUNNING↔FREEZE↔SETTLED) that flips button states: full build,
+    // but not while an input is focused.
+    const ae = document.activeElement;
+    const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'SELECT') && v.contains(ae);
+    if (!typing) renderMain(v);
   } else if (h.startsWith('#/leaderboard')) {
-    renderLeaderboard(view());
+    renderLeaderboard(v);
   }
 }
 

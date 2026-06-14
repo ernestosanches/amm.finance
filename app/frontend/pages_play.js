@@ -18,25 +18,60 @@ async function act(body) {
   }
 }
 
+async function doRegister(name) {
+  name = (name || '').trim();
+  if (!name) { toast('Enter a name to register.', false); return; }
+  try { await api('/register', { method: 'POST', body: { name } }); await afterAuth(); }
+  catch (e) {
+    const taken = /taken|exist|registered/i.test(e.message || '');
+    toast(taken ? `"${name}" is already taken — use Log in instead.` : e.message, false);
+  }
+}
+
+async function doLogin(name) {
+  name = (name || '').trim();
+  if (!name) { toast('Enter your name to log in.', false); return; }
+  try { await api('/login', { method: 'POST', body: { name } }); await afterAuth(); }
+  catch (e) {
+    toast(e.status === 404 ? `No player named "${name}" — register first.` : e.message, false);
+  }
+}
+
 export function renderLanding(view) {
-  const reg = el('input', { placeholder: 'choose a name', id: 'reg-name' });
-  const log = el('input', { placeholder: 'existing name', id: 'log-name' });
   const registered = document.cookie.includes('registered=1');
-  mount(view,
-    el('div.panel', { style: 'max-width:460px;margin:32px auto' },
-      el('h3', {}, 'Join the market-making game'),
-      el('p.muted', {}, `You'll get a balanced bag (${App.config.quote_symbol} + ${App.config.base_symbol}). ` +
-        'Trade and provide liquidity across two pools; highest portfolio value at settlement wins.'),
-      !registered && el('div.row', { style: 'margin-top:12px' }, reg,
-        el('button.primary', { onClick: async () => {
-          try { await api('/register', { method: 'POST', body: { name: reg.value.trim() } });
-            await afterAuth(); } catch (e) { toast(e.message, false); } } }, 'Register')),
-      el('div.row', { style: 'margin-top:12px' }, log,
-        el('button', { onClick: async () => {
-          try { await api('/login', { method: 'POST', body: { name: log.value.trim() } });
-            await afterAuth(); } catch (e) { toast(e.message, false); } } }, 'Log in')),
-      noticeNode(),
-    ));
+  const log = el('input', { placeholder: 'your name', id: 'log-name' });
+  const loginRow = el('div.row', { style: 'margin-top:8px' }, log,
+    el('button.primary', { onClick: () => doLogin(log.value) }, 'Log in'));
+  const reg = el('input', { placeholder: 'choose a name', id: 'reg-name' });
+  const registerRow = el('div.row', { style: 'margin-top:8px' }, reg,
+    el('button.primary', { onClick: () => doRegister(reg.value) }, 'Register'));
+
+  const blurb = el('p.muted', {}, `You'll get a balanced bag (${App.config.quote_symbol} + ` +
+    `${App.config.base_symbol}). Trade and provide liquidity across two pools; highest portfolio ` +
+    `value at settlement wins.`);
+
+  const body = registered
+    ? el('div', {},
+        el('div', { style: 'margin-top:12px;padding:10px;border:1px solid var(--accent);border-radius:8px' },
+          el('b', { class: 'accent' }, 'You’re already registered in this browser.'),
+          el('div.muted', { style: 'margin-top:4px;font-size:13px' },
+            'Use Log in with your player name below. To register a different player, open a ' +
+            'private / incognito window.')),
+        el('p.muted', { style: 'margin:14px 0 0;font-size:12px' }, 'Log in'),
+        loginRow,
+        el('details', { style: 'margin-top:14px' },
+          el('summary', { class: 'muted', style: 'cursor:pointer' }, 'register another player anyway'),
+          el('p.muted', { style: 'margin:6px 0;font-size:12px' },
+            'A browser is meant to hold one player; this reuses your current session.'),
+          registerRow))
+    : el('div', {},
+        registerRow,
+        el('p.muted', { style: 'margin:14px 0 0;font-size:12px' }, 'Already joined? Log in:'),
+        loginRow);
+
+  mount(view, el('div.panel', { style: 'max-width:480px;margin:32px auto' },
+    el('h3', {}, 'Join the market-making game'), blurb, body, noticeNode()));
+  view.dataset.page = 'landing';
 }
 
 async function afterAuth() { await refreshState(); location.hash = '#/'; App.emit(); }
@@ -46,24 +81,27 @@ function noticeNode() {
   return el('p', { class: notice.ok ? 'ok' : 'err', style: 'margin-top:10px' }, notice.msg);
 }
 
+// The main page is built ONCE per route/phase; on each tick `updateLiveMain()` patches only the
+// dynamic numbers (price, TVL, fees, portfolio, chart, positions) in place — so trade inputs, the
+// open deposit form, and a curve you're drawing are NEVER torn down mid-interaction.
 export function renderMain(view) {
   const s = App.state;
   if (!s.account) return renderLanding(view);
-  const totalPos = s.pools.reduce((a, p) => a + (p.your_positions || []).reduce((b, q) => b + q.value_usd0, 0), 0);
+  const totalPos = posTotal(s);
   const total = s.account.balance_usd0 + s.account.balance_eth0 * s.d + totalPos;
   mount(view,
     el('div.cols',
       el('div.panel',
         el('h3', {}, 'Portfolio'),
-        kv(App.config.quote_symbol, fmt.usd2(s.account.balance_usd0)),
-        kv(App.config.base_symbol, fmt.eth(s.account.balance_eth0) + ` (${fmt.usd(s.account.balance_eth0 * s.d)})`),
-        kv('In LP positions', fmt.usd(totalPos)),
+        kvId(App.config.quote_symbol, 'pf-usd0', fmt.usd2(s.account.balance_usd0)),
+        kvId(App.config.base_symbol, 'pf-eth0', ethLine(s)),
+        kvId('In LP positions', 'pf-pos', fmt.usd(totalPos)),
         el('div.kv', { style: 'border-top:1px solid var(--line);margin-top:6px;padding-top:6px' },
-          el('span', {}, 'Total value'), el('span', { class: 'big' }, fmt.usd(total))),
+          el('span', {}, 'Total value'), el('span', { id: 'pf-total', class: 'big' }, fmt.usd(total))),
       ),
       el('div.panel',
         el('h3', {}, `External price (D, ${App.config.quote_symbol}/${App.config.base_symbol})`),
-        sparkline(App.dseries.map((p) => ({ y: p.d }))),
+        el('div', { id: 'dchart' }, sparkline(App.dseries.map((p) => ({ y: p.d })))),
         el('p.muted', { style: 'margin:8px 0 0' }, 'Untradeable mark. Pushing a pool toward D is a directional bet.'),
       ),
     ),
@@ -71,9 +109,37 @@ export function renderMain(view) {
     el('div.cols', { style: 'margin-top:16px' },
       poolCard('v3'), poolCard('curve')),
   );
+  view.dataset.page = 'main';
+  view.dataset.phase = s.clock.phase;
 }
 
-function kv(k, v) { return el('div.kv', {}, el('span', {}, k), el('span', {}, v)); }
+const posTotal = (s) => s.pools.reduce((a, p) => a + (p.your_positions || []).reduce((b, q) => b + q.value_usd0, 0), 0);
+const ethLine = (s) => fmt.eth(s.account.balance_eth0) + ` (${fmt.usd(s.account.balance_eth0 * s.d)})`;
+
+export function updateLiveMain() {
+  const s = App.state;
+  if (!s.account) return;
+  const set = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+  const totalPos = posTotal(s);
+  set('pf-usd0', fmt.usd2(s.account.balance_usd0));
+  set('pf-eth0', ethLine(s));
+  set('pf-pos', fmt.usd(totalPos));
+  set('pf-total', fmt.usd(s.account.balance_usd0 + s.account.balance_eth0 * s.d + totalPos));
+  const dc = document.getElementById('dchart');
+  if (dc) mount(dc, sparkline(App.dseries.map((p) => ({ y: p.d }))));
+  const running = s.clock.phase === 'RUNNING';
+  for (const label of ['v3', 'curve']) {
+    const p = App.pool(label);
+    if (!p) continue;
+    set(`pp-${label}-price`, fmt.price(p.price) + ` ${App.config.quote_symbol}/${App.config.base_symbol}`);
+    set(`pp-${label}-tvl`, fmt.usd(p.tvl_usd0));
+    set(`pp-${label}-fees`, fmt.usd2(p.your_fees_usd0 || 0));
+    const pc = document.getElementById(`pp-${label}-pos`);
+    if (pc) mount(pc, positionsList(label, p, running));  // no inputs inside — safe to rebuild
+  }
+}
+
+function kvId(k, id, v) { return el('div.kv', {}, el('span', {}, k), el('span', { id }, v)); }
 
 function poolCard(label) {
   const s = App.state;
@@ -83,14 +149,14 @@ function poolCard(label) {
   return el('div.panel',
     el('div.row', {}, el('h3', { style: 'flex:1' }, title),
       el('a', { href: `#/pool/${label}`, style: 'color:var(--muted);font-size:12px' }, 'detail →')),
-    kv('Pool price', fmt.price(p.price) + ` ${App.config.quote_symbol}/${App.config.base_symbol}`),
-    kv('TVL', fmt.usd(p.tvl_usd0)),
-    kv('Your fees', fmt.usd2(p.your_fees_usd0 || 0)),
+    kvId('Pool price', `pp-${label}-price`, fmt.price(p.price) + ` ${App.config.quote_symbol}/${App.config.base_symbol}`),
+    kvId('TVL', `pp-${label}-tvl`, fmt.usd(p.tvl_usd0)),
+    kvId('Your fees', `pp-${label}-fees`, fmt.usd2(p.your_fees_usd0 || 0)),
     !running && el('p.muted', { style: 'margin:8px 0 0' }, `Trading is ${s.clock.phase.toLowerCase()}.`),
     el('div', { style: 'margin-top:10px' }, tradeRow(label, running)),
     el('details', { style: 'margin-top:10px' }, el('summary', {}, 'Deposit liquidity'),
       label === 'v3' ? rangeDeposit(label, running) : curveDeposit(label, running)),
-    positionsList(label, p, running),
+    el('div', { id: `pp-${label}-pos` }, positionsList(label, p, running)),
   );
 }
 

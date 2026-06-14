@@ -5,13 +5,13 @@ Compile to PDF with Marp (https://marp.app):
 
     npx @marp-team/marp-cli@latest PRESENTATION.md --pdf --allow-local-files
 
-or to HTML / PPTX:
+or, with no Node, use the repo's bundled Chromium:
 
-    npx @marp-team/marp-cli@latest PRESENTATION.md --html --allow-local-files
-    npx @marp-team/marp-cli@latest PRESENTATION.md --pptx --allow-local-files
+    python3 build_presentation.py        # -> out/PRESENTATION.pdf
 
-(--allow-local-files is required so the embedded screenshots/figures load.)
 Image paths are relative to the repo root, so keep this file at the repo root.
+Slide-image directives: `![full](img)` = big image with a one-line caption,
+`![bg right:NN%](img)` = right-column image. Both understood by build_presentation.py.
 -->
 ---
 marp: true
@@ -22,198 +22,146 @@ style: |
   section { font-size: 26px; }
   h1 { color: #1a73e8; }
   h2 { color: #1a73e8; }
-  code { background: #f3f4f6; }
-  .small { font-size: 20px; color: #555; }
-  table { font-size: 22px; }
-  footer { color: #999; }
-footer: "A Better AMM · closed-economy market-making game + on-chain measurement engine"
+  .small { font-size: 20px; color: #829ab1; }
+  .big { font-size: 40px; color: #243b53; }
+  table { font-size: 24px; }
+footer: "amm.finance"
 ---
 
 <!-- _paginate: false -->
 
 # A Better Automated Market Maker
 
-### Measure how real AMMs behave — then let people *play* better ones into existence.
+### See how real AMMs actually behave — then *design and try* a better one, live.
 
-**Two things, one engine:**
+### 🔗 **[amm.finance](https://amm.finance)**
 
-1. A keyless, on-chain **measurement pipeline** that reconstructs a Uniswap v3 pool as a live order book.
-2. A **multiplayer market-making game** built on that same engine — a closed economy you can run as a 1-hour live event.
-
-### 🔗 Live demo: **[amm.finance](https://amm.finance)**
-
-<span class="small">Ernesto Sanches · all code, tests, and figures in this repo</span>
+<span class="small">Ernesto Sanches · everything in this deck is real and reproducible from the repo</span>
 
 ---
 
-## The problem — why this is worth building
+## Liquidity you can't see, can't price
 
-Automated Market Makers are the engine of DeFi, but today's formulas **leave value on the table**:
+- **LPs** earn less than the risk they take — capital sits where it never trades.
+- **Traders** pay more than they should — wider spreads, more slippage.
+- An AMM curve is an **invisible, abstract object**. Nobody has good intuition for what a liquidity shape *does*.
 
-- **LPs earn less than the risk they take** — capital sits in price ranges that never trade.
-- **Traders pay more than they should** — wider effective spreads, more slippage.
-- **Liquidity is wasted by design**, not fixed by incentives.
-
-**The core difficulty:** an AMM curve is an abstract, invisible object. Nobody — LPs, traders, or designers — has good intuition for *what a liquidity shape actually does*.
-
-> You can't improve what you can't see, measure, or experiment with safely.
+<span class="small">You can't improve what you can't see, measure, or safely experiment with.</span>
 
 ---
 
-## The insight (the "huh, nice")
+![full](out/png/depth_virtual_frame23.png)
 
-**A concentrated-liquidity AMM *is* a limit order book** — just drawn in √price instead of price.
+## An AMM *is* an order book
 
-- A v3 position = a dense grid of **paired limit orders**, sizes growing as price falls (`qₓ = L·(1/√Pᵢ − 1/√Pᵢ₊₁)`).
-- **Spot is just a pointer.** Levels above = live **asks**, below = live **bids**.
-- **A swap slides the pointer and each crossed level flips side** — a filled ask instantly becomes a resting bid at the same price and size, funded by the taker. No level is re-priced or re-sized.
-- The fee is *skimmed off the taker's input* into a side counter — never reinvested.
-
-Get this one model right and you can both **measure** real pools and **simulate** new ones with the *same code*.
+<span class="small">Bids below spot (green), asks above (red). A swap slides the line — and every level it crosses flips side.</span>
 
 ---
 
-## What we built
+<!-- _footer: "Part 1 — measure a real pool, from chain data alone" -->
 
-| | Part 1 — Measure | Part 2 — Play |
-|---|---|---|
-| **Goal** | See how a real pool behaves | Experiment with better curves |
-| **Input** | Live Uniswap v3 on-chain data | Players in a closed economy |
-| **Output** | Order-book-over-time + volume/fees/APR | A live leaderboard event |
-| **Shared core** | the AMM-as-order-book engine | the *same* engine, live |
+![full](out/tvl.png)
 
-Both halves are real, running, and tested — **134 + 60 tests green**, plus headless-browser and chaos rehearsals.
+## One real pool, one real day — reconstructed with no account
+
+<span class="small">ETH/USDC 0.3%, 24h of TVL — keyless public RPC only: no wallet, no API key, no Graph/Dune.</span>
 
 ---
 
-## Part 1 — Measurement pipeline (RPC-only, no accounts)
+![full](out/price_flow.png)
 
-From a pool address + date range, with **only the keyless public RPC** (no wallet, no API key, no Graph/Dune):
+## Every trade, classified — buys up, sells down
 
-1. **Download** swaps / mints / burns / collects (`eth_getLogs`, binary-search block resolution).
-2. **Reconstruct** TVL, buy/sell flow, and the full liquidity-vs-price book over time.
-3. **Recover true per-LP identity** via NFT `tokenId` (joins each Add to its later Removes).
-4. **Replay** every swap through the order-book engine → daily **volume, fees, APR**.
-
-**Real run — ETH/USDC 0.3%, Jun 12 2026 (770 swaps):**
-volume ≈ **$2.73M** · fees ≈ **$8.2k** (= volume × 0.3%) · TVL ≈ **$20.8M** · **APR ≈ 14.3%** — squarely in Uniswap's published range. The model cross-checks against reality.
+<span class="small">770 swaps across the day, each priced and sided straight from the chain.</span>
 
 ---
 
-## Part 1 — the level-3 virtual book over time
+![full](out/liquidity_distribution.png)
 
-![bg right:52% fit](out/png/orderbook_virtual__without_initial_frame23.png)
+## Where the liquidity actually sits
 
-Each bar = total liquidity at a price, **decomposed into one colored segment per LP position**.
-
-- Time slider replays the whole day.
-- The dashed line is spot; **levels flip bid↔ask as it moves** — exactly the insight, drawn from real chain data.
-- Shareable standalone HTML, units on every axis.
-
-<span class="small">8 interactive figures generated by one command: `python run_all.py`</span>
+<span class="small">Absolute depth across price, start vs end of day — recovered from on-chain state, not estimated.</span>
 
 ---
 
-## Part 2 — the game: multiplayer market-making
+![full](out/png/orderbook_virtual__without_initial_frame23.png)
 
-![bg right:46% fit](app/out/ui_2_running.png)
+## …decomposed into individual LP orders
 
-A **closed-economy, ~1-hour live event.** Players get a balanced bag of two tokens and compete for the **highest portfolio value** at settlement.
-
-- They act *only* through two internal pools: **buy / sell / deposit / withdraw**.
-- An external price **D** is a *visible-but-untradeable* mark — so pushing a pool toward D is a **directional bet**, not free money.
-- Real-time, server-authoritative, live WebSocket updates.
+<span class="small">Each color is one liquidity provider's position, replayed across the whole day with a time slider.</span>
 
 ---
 
-## Part 2 — "draw your curve" (the bold bit)
+<!-- _paginate: true -->
 
-Two pools share one engine; they differ only in how you *add* liquidity:
+## It checks out against reality
 
-- **v3 pool** — deposit over a price **range** (a boxcar of `L`).
-- **Curve pool** — **draw an arbitrary liquidity profile** with your mouse. The engine funds it at the current price and validates non-negativity.
+<div class="big">
+$2.73M volume · $8.2k fees · <b>14.3% APR</b>
+</div>
 
-> This turns "what liquidity shape is best?" into a **game you can win** — a curve shape becomes a *regime bet*. The invisible AMM object becomes something you sketch and watch compete on a leaderboard.
-
-That's the bridge from *measuring* AMMs to *discovering better ones*.
-
----
-
-## Part 2 — the live level-3 book, in-game
-
-![bg right:52% fit](docs/img/game_level3_book.png)
-
-The exact measurement view, now driven by a *live* game:
-
-- Grey = house seed liquidity, showing the smooth `q ∝ 1/√P` density.
-- Colored hump = a player's deposited range, straddling the spot line.
-- Bids below spot, asks above, **updating every tick** as players trade.
-
-The thing you reconstructed from chain data and the thing players steer are the **same object**.
+<span class="small">Computed by replaying every swap through our engine — and it lands squarely on Uniswap's published number for this pool. The model is validated against the real thing.</span>
 
 ---
 
-## Does it work? — yes, and we proved it hard
+<!-- _footer: "Part 2 — a better AMM you can try, live" -->
 
-![bg right:42% fit](app/out/ui_6_admin.png)
+![full](app/out/ui_1_lobby.png)
 
-- **Conservation invariant** after *every* action: Σ balances + Σ reserves + Σ fees = constant. Reads at **float-epsilon (Δ ≈ 1e-15…1e-12)** end to end — the ledger is exact.
-- **Crash-safe:** action-log-as-source-of-truth, fsync-before-ack. `kill -9` mid-game → restart → leaderboard **byte-identical, zero loss** (rehearsed).
-- **Degrade, never derail:** a bad action is rejected + alerted; the event never halts.
-- **Verified by rendering**, not just data: headless Chromium drives the real UI and fails on any JS error.
+## A demo app with two AMM models — try both, right now
 
----
-
-## Does it work? — the receipts
-
-- **194 tests green total** — `134` (pipeline) + `60` (game), all stdlib `unittest`, no network.
-- **Engine invariants** tested against the *live* loop: telescoping, geometric-mean fill, constant spread, L-never-mutated, zero-fee path-independence, per-token conservation.
-- **Chaos rehearsal passes:** kill-9 zero-loss, 200-request load burst, 40-connection WebSocket reconnect storm.
-- **One-command run:** `python app/run.py` (game) · `python run_all.py` (pipeline) · optional `--tunnel` for a public link.
-
-<span class="small">Stack: Python · FastAPI · SQLite (WAL) · vanilla-JS frontend (no build step, offline-replayable).</span>
+<span class="small">Everyone in the room gets a balance and can participate. Same tokens, same engine — two different AMM designs to experiment with.</span>
 
 ---
 
-## Who uses it / who pays
+![full](app/out/ui_2_running.png)
 
-![bg right:40% fit](docs/img/game_leaderboard.png)
+## Uniswap's AMM vs. our new design — side by side
 
-- **Protocol & LP teams** — a safe sandbox to test curve shapes and fee tiers before risking real TVL.
-- **Exchanges / educators** — a *live event* that teaches market-making and impermanent loss by playing, not lecturing.
-- **Quant / research** — the measurement engine is a clean, account-free way to benchmark any pool's real volume/fees/APR.
-
-The leaderboard marks everyone against the **passive-LP house benchmark** — so "did your curve beat doing nothing?" is answered directly.
+<span class="small">Left pool is classic Uniswap v3. Right pool is our model. Trade and provide liquidity on both, and watch which one serves traders and LPs better.</span>
 
 ---
 
-## Why it's clever (recap)
+![full](docs/img/game_level3_book.png)
 
-- **One model, two uses:** the AMM-as-order-book engine both *reconstructs* real pools and *runs* a live game — the simulator is validated against $2.73M of real on-chain flow.
-- **Levels flip side as spot moves** — the book is a *derived view*, never materialized; no per-level state to corrupt.
-- **The conservation invariant does triple duty:** anti-cheat, crash-recovery mechanism, and correctness test — all the same check.
-- **Draw-your-curve** makes an abstract liquidity formula into something a human can sketch and compete with.
+## Our model: you draw the AMM curve yourself
+
+<span class="small">Instead of Uniswap's fixed price range, place liquidity in *any* shape you want — it becomes a live order book (the colored hump on the grey baseline). A real way to experiment with better curves.</span>
 
 ---
 
-## What's next
+![full](docs/img/game_leaderboard.png)
 
-- **Regime scenarios** — trending / choppy / mean-reverting `D` to showcase when each curve shape wins.
-- **Auto-suggest curves** — mine winning shapes from played games; feed them back as candidate AMM formulas.
-- **Stronger identity** and larger fields if it graduates from a friendly event.
-- **Multi-pool / multi-fee** measurement dashboards (the pipeline is already pool-agnostic via on-chain metadata).
+## Which design earns more?
+
+<span class="small">Every participant marked against a passive-LP benchmark — a direct, live experiment in whether a hand-drawn curve can beat Uniswap's fixed-range model.</span>
+
+---
+
+![full](app/out/ui_5_profile.png)
+
+## Every experiment, fully tracked
+
+<span class="small">Balances, fees, volume, open positions, full action history — and value-over-time, so each participant can see exactly how their AMM design performed.</span>
+
+---
+
+![full](app/out/ui_6_admin.png)
+
+## Runs as a real event
+
+<span class="small">One operator configures and starts it. The ledger reads exact to float-epsilon, and a mid-game crash restarts with byte-identical state — zero loss.</span>
 
 ---
 
 <!-- _paginate: false -->
+<!-- _footer: "" -->
 
-# Thank you — let's run it live
+# Try it: 🔗 [amm.finance](https://amm.finance)
 
-### 🔗 Play it now: **[amm.finance](https://amm.finance)**
+<div class="big">
+Measure → <code>python run_all.py</code><br>
+Try the new AMM → <code>python app/run.py</code>
+</div>
 
-**Measure it:** `python run_all.py` → 8 interactive order-book figures from real chain data.
-**Play it:** `python app/run.py` → register, admin-starts, trade, watch the leaderboard.
-
-> We made the invisible AMM curve **visible, measurable, and playable** — and showed a better one can win.
-
-<span class="small">Everything in this deck is real and reproducible from this repo.</span>
+<span class="small">We made the invisible AMM curve visible and measurable — then built a better one you can design and try for yourself.</span>

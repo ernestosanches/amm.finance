@@ -79,3 +79,9 @@ dmypy.json
 *.parquet
 *.json
 out/
+
+# app demo runtime data (SQLite db, snapshots)
+app/data/*.db
+app/data/*.db-*
+app/data/*.jsonl
+app/data/backup/

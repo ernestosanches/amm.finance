@@ -1,0 +1,6 @@
+# Backend deps for the AMM game (Stage S0+). Install: pip install -r app/requirements.txt
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+websockets
+# httpx is pulled in by fastapi.testclient (used by the test suite).
+# Frontend has NO build step / no JS deps: vanilla ES modules served statically.

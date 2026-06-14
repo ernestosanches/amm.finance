@@ -423,13 +423,14 @@ the *non-obvious* decisions are spelled out; routine wiring is left to the devel
 
 Goal: backend and frontend can be built in parallel, so the **wire contract is pinned first**.
 
-- [ ] Repo layout: `backend/` (FastAPI app, engine package, SQLite) and `frontend/` (React app).
-- [ ] **Freeze the API contract (§8) as the single source of truth** — REST request/response
+- [x] Repo layout: `backend/` (FastAPI app, engine package, SQLite) and `frontend/` (**vanilla-JS
+      SPA** — no React/build/CDN, chosen for offline replay + zero toolchain; see APP_WORK.md S0).
+- [x] **Freeze the API contract (§8) as the single source of truth** — REST request/response
       shapes and the WS message envelope (type + payload) for: `D` tick, pool price/TVL, clock,
-      leaderboard delta, freeze/settle. Capture as typed schemas (e.g. Pydantic + generated TS
-      types, or a shared JSON schema) so both sides compile against it.
-- [ ] **Mock server** that serves the contract with canned data, so **[F]** can start immediately.
-- [ ] Pin conventions from §1 once, in code: `P ≡ D`, no decimal scaling, `Decimal` balances.
+      leaderboard delta, freeze/settle. Captured as Pydantic models in `backend/contracts.py`.
+- [x] **Mock server** — minimal FastAPI app (`/health` + static) so **[F]** can start immediately.
+- [x] Pin conventions from §1 once, in code: `P ≡ D`, no decimal scaling, `Decimal` balances
+      (`backend/config.py`).
 - Acceptance: `GET /health` is green; the React dev server renders against the mock; contract
   types shared. Tests: contract schema validates; a sample message of each WS type round-trips.
 
